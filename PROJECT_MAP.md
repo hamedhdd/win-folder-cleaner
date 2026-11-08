@@ -77,7 +77,8 @@ flowchart TD
 | `is_elevated` | `core::security` | Any Token | Queries Process Token Elevation via Win32 `GetTokenInformation`. |
 | `relaunch_as_admin` | `core::security` | Standard User -> Admin | Invokes `ShellExecuteExW` with verb `runas` to elevate while preserving arguments. |
 | `is_critical_system_path` | `core::security` | None | Validates paths against canonical Windows protected roots (`C:\Windows`, `System32`, `Program Files`, etc.). |
-| `scan_directory_tree` | `core::analyzer` | Read Permissions | Root & Level 1 fast scan with strict descending size sorting and candidate bounds. |
+| `compute_dir_stats_recursive`| `core::analyzer` | Read Permissions | Fast zero-allocation recursive traversal computing true cumulative byte counts and file/dir totals. |
+| `scan_directory_tree` | `core::analyzer` | Read Permissions | Root & Level 1 fast scan with strict descending size sorting, true recursive sizes, and candidate bounds. |
 | `scan_deeper_level_for_node` | `core::analyzer` | Read Permissions | Scans deeper levels on-demand exclusively for folders expanded by clicking, sorting children by size. |
 | `load_directory_files` | `core::analyzer` | Read Permissions | Reads immediate files for a single directory on demand (< 1ms), avoiding full disk file caching. |
 | `clean_directory_contents` | `core::cleaner` | Write Permissions | Deletes contents of a folder recursively while strictly preserving the root directory itself. |

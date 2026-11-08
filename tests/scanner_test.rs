@@ -114,26 +114,25 @@ fn test_upper_levels_scanned_and_on_demand_deeper_expansion() {
         .expect("scan should succeed");
 
     let mut root_node = summary.root_tree.expect("root tree should exist");
-    // Verify Level 1 children are sorted descending by size
-    // level1_b has 100 bytes direct file; level1_a has 0 bytes direct file
+    // Verify Level 1 children are sorted descending by TRUE recursive size
+    // level1_a has 250 bytes recursive size; level1_b has 100 bytes recursive size
     assert_eq!(root_node.children.len(), 2);
-    assert_eq!(root_node.children[0].name, "level1_b");
-    assert_eq!(root_node.children[0].total_size, 100);
-    assert_eq!(root_node.children[1].name, "level1_a");
-    assert_eq!(root_node.children[1].total_size, 0);
+    assert_eq!(root_node.children[0].name, "level1_a");
+    assert_eq!(root_node.children[0].total_size, 250);
+    assert_eq!(root_node.children[1].name, "level1_b");
+    assert_eq!(root_node.children[1].total_size, 100);
 
     // Verify deeper level of level1_a is NOT scanned yet (on-demand only)
-    assert!(!root_node.children[1].is_deeper_scanned);
-    assert_eq!(root_node.children[1].children.len(), 0);
+    assert!(!root_node.children[0].is_deeper_scanned);
 
     // Now simulate user expanding level1_a: deeper level scan is triggered ONLY upon expansion!
-    scan_deeper_level_for_node(&mut root_node.children[1]);
+    scan_deeper_level_for_node(&mut root_node.children[0]);
 
-    assert!(root_node.children[1].is_deeper_scanned);
-    assert_eq!(root_node.children[1].children.len(), 1);
-    assert_eq!(root_node.children[1].children[0].name, "level2_nested");
-    assert_eq!(root_node.children[1].children[0].total_size, 250);
-    assert_eq!(root_node.children[1].total_size, 250);
+    assert!(root_node.children[0].is_deeper_scanned);
+    assert_eq!(root_node.children[0].children.len(), 1);
+    assert_eq!(root_node.children[0].children[0].name, "level2_nested");
+    assert_eq!(root_node.children[0].children[0].total_size, 250);
+    assert_eq!(root_node.children[0].total_size, 250);
 
     // Clean up
     let _ = fs::remove_dir_all(&temp_root);

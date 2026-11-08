@@ -80,6 +80,9 @@ pub fn render_explorer_view(
     // TOP HALF: [Top-Left: Directory Tree] | [Top-Right: Contents Detailed List]
     ui.allocate_ui(Vec2::new(ui.available_width(), top_quadrant_height), |ui| {
         ui.columns(2, |cols| {
+            cols[0].set_height(top_quadrant_height);
+            cols[1].set_height(top_quadrant_height);
+
             // Top-Left: Directory Tree View (Folder | Size)
             render_top_left_folder_tree(&mut cols[0], state);
 
@@ -99,6 +102,9 @@ pub fn render_explorer_view(
     // BOTTOM HALF: [Bottom-Left: Drives Overview] | [Bottom-Right: Interactive Pie Chart]
     ui.allocate_ui(Vec2::new(ui.available_width(), bottom_quadrant_height), |ui| {
         ui.columns(2, |cols| {
+            cols[0].set_height(bottom_quadrant_height);
+            cols[1].set_height(bottom_quadrant_height);
+
             // Bottom-Left: Drives Overview (Drive | Size | Used | Free)
             render_bottom_left_drives_table(&mut cols[0], state, on_start_scan);
 
@@ -263,16 +269,22 @@ fn render_top_left_folder_tree(ui: &mut Ui, state: &mut ExplorerViewState) {
                     let unit = state.selected_unit;
                     let mut node_to_select = None;
 
-                    ScrollArea::both().auto_shrink([false, false]).show(ui, |ui| {
-                        render_tree_recursive_row(
-                            ui,
-                            root_node,
-                            unit,
-                            0,
-                            &mut state.expanded_paths,
-                            &mut node_to_select,
-                        );
-                    });
+                    let scroll_max_h = (ui.available_height() - 4.0).max(60.0);
+                    ScrollArea::vertical()
+                        .id_salt("folder_tree_scroll_panel")
+                        .auto_shrink([false, false])
+                        .max_height(scroll_max_h)
+                        .show(ui, |ui| {
+                            ui.set_min_width(ui.available_width());
+                            render_tree_recursive_row(
+                                ui,
+                                root_node,
+                                unit,
+                                0,
+                                &mut state.expanded_paths,
+                                &mut node_to_select,
+                            );
+                        });
 
                     if let Some(mut node) = node_to_select {
                         if !node.is_deeper_scanned {
@@ -398,8 +410,13 @@ fn render_top_right_contents_table(
 
                 // Detailed Table
                 let total_parent_size = node.total_size.max(1);
+                let contents_max_h = (ui.available_height() - 4.0).max(60.0);
 
-                ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+                ScrollArea::vertical()
+                    .id_salt("pro_contents_scroll_panel")
+                    .auto_shrink([false, false])
+                    .max_height(contents_max_h)
+                    .show(ui, |ui| {
                     egui::Grid::new("pro_contents_grid")
                         .striped(true)
                         .spacing([10.0, 4.0])
@@ -511,7 +528,12 @@ fn render_bottom_left_drives_table(
             let unit = state.selected_unit;
             let mut drive_to_scan = None;
 
-            ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+            let drives_max_h = (ui.available_height() - 4.0).max(60.0);
+            ScrollArea::vertical()
+                .id_salt("bottom_drives_scroll_panel")
+                .auto_shrink([false, false])
+                .max_height(drives_max_h)
+                .show(ui, |ui| {
                 egui::Grid::new("bottom_drives_grid")
                     .striped(true)
                     .spacing([10.0, 6.0])

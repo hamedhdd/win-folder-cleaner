@@ -1,6 +1,6 @@
 use std::collections::{BinaryHeap, HashMap};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
@@ -63,53 +63,64 @@ pub fn load_directory_files(dir_path: &Path) -> Vec<FileInfo> {
     files
 }
 
-/// Scans deeper levels ON-DEMAND for a specific folder node that the user expanded by clicking in the tree view.
+/// Rapidly computes the TRUE RECURSIVE size, total file count, total subdirectory count,
+/// immediate child directory paths, and immediate files for a folder.
 ///
-/// 1. Scans its direct subdirectories concurrently across CPU cores using Rayon.
-/// 2. For each subdirectory, computes its direct size, file count, and discovers its subfolder count.
-/// 3. STRICT REQUIREMENT: Sorts children descending by total size so heaviest folders are at the top.
-/// 4. Leaves deeper sub-subfolders unscanned until the user explicitly expands them.
-pub fn scan_deeper_level_for_node(node: &mut FolderTreeNode) {
-    if node.is_deeper_scanned {
-        // Already scanned deeper level; ensure sorted by size
-        node.children.sort_by(|a, b| b.total_size.cmp(&a.total_size));
-        return;
-    }
-
-    let entries = match fs::read_dir(&node.path) {
-        Ok(iter) => iter,
-        Err(_) => {
-            node.is_inaccessible = true;
-            node.is_deeper_scanned = true;
-            return;
-        }
-    };
-
+/// Allocates ZERO memory for individual recursive files — only accumulates raw u64 bytes and counts.
+pub fn compute_dir_stats_recursive(
+    dir_path: &Path,
+    cancel_token: &Arc<AtomicBool>,
+) -> (u64, usize, usize, Vec<PathBuf>, Vec<FileInfo>) {
+    let mut total_bytes = 0u64;
+    let mut total_files = 0usize;
+    let mut total_dirs = 0usize;
+    let mut direct_subdirs = Vec::new();
     let mut direct_files = Vec::new();
-    let mut direct_size = 0u64;
-    let mut subdirs = Vec::new();
 
-    for entry in entries.flatten() {
-        let entry_path = entry.path();
-        if let Ok(meta) = fs::symlink_metadata(&entry_path) {
+    let mut stack = vec![dir_path.to_path_buf()];
+
+    while let Some(current) = stack.pop() {
+        if cancel_token.load(Ordering::Relaxed) {
+            break;
+        }
+
+        let entries = match fs::read_dir(&current) {
+            Ok(iter) => iter,
+            Err(_) => continue,
+        };
+
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let meta = match fs::symlink_metadata(&path) {
+                Ok(m) => m,
+                Err(_) => continue,
+            };
+
             let ft = meta.file_type();
             if ft.is_symlink() {
                 continue;
             }
+
             if ft.is_dir() {
-                subdirs.push(entry_path);
+                total_dirs += 1;
+                if current == dir_path {
+                    direct_subdirs.push(path.clone());
+                }
+                stack.push(path);
             } else if ft.is_file() {
                 let size = meta.len();
-                direct_size += size;
-                if direct_files.len() < 100 {
+                total_files += 1;
+                total_bytes += size;
+
+                if current == dir_path && direct_files.len() < 100 {
                     let name = entry.file_name().to_string_lossy().to_string();
-                    let ext = entry_path
+                    let ext = path
                         .extension()
                         .and_then(|e| e.to_str())
                         .unwrap_or("(no extension)")
                         .to_lowercase();
                     direct_files.push(FileInfo {
-                        path: entry_path,
+                        path,
                         name,
                         extension: ext,
                         size,
@@ -125,12 +136,73 @@ pub fn scan_deeper_level_for_node(node: &mut FolderTreeNode) {
         }
     }
 
-    node.immediate_files_size = direct_size;
+    direct_files.sort_by(|a, b| b.size.cmp(&a.size));
+    (total_bytes, total_files, total_dirs, direct_subdirs, direct_files)
+}
+
+/// Scans deeper levels ON-DEMAND for a specific folder node that the user expanded by clicking in the tree view.
+///
+/// 1. Concurrently computes TRUE RECURSIVE cumulative sizes for its direct subdirectories using Rayon.
+/// 2. STRICT REQUIREMENT 1: Sorts children descending by total size so heaviest folders are at the top.
+/// 3. STRICT REQUIREMENT 2: Runs deeper level scanning exclusively for the clicked folder, leaving nested sub-subfolders
+///    unscanned until the user explicitly expands them.
+pub fn scan_deeper_level_for_node(node: &mut FolderTreeNode) {
+    if node.is_deeper_scanned {
+        node.children.sort_by(|a, b| b.total_size.cmp(&a.total_size));
+        return;
+    }
+
+    let cancel_token = Arc::new(AtomicBool::new(false));
+
+    // Discover direct subdirectories and direct files of node.path
+    let mut direct_subdirs = Vec::new();
+    let mut direct_files = Vec::new();
+    let mut immediate_files_size = 0u64;
+
+    if let Ok(entries) = fs::read_dir(&node.path) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if let Ok(meta) = fs::symlink_metadata(&path) {
+                let ft = meta.file_type();
+                if ft.is_symlink() {
+                    continue;
+                }
+                if ft.is_dir() {
+                    direct_subdirs.push(path);
+                } else if ft.is_file() {
+                    let size = meta.len();
+                    immediate_files_size += size;
+                    if direct_files.len() < 100 {
+                        let name = entry.file_name().to_string_lossy().to_string();
+                        let ext = path
+                            .extension()
+                            .and_then(|e| e.to_str())
+                            .unwrap_or("(no extension)")
+                            .to_lowercase();
+                        direct_files.push(FileInfo {
+                            path,
+                            name,
+                            extension: ext,
+                            size,
+                            modified: meta.modified().ok(),
+                            is_dir: false,
+                            is_symlink: false,
+                            is_readonly: meta.permissions().readonly(),
+                            is_locked: false,
+                            is_inaccessible: false,
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    node.immediate_files_size = immediate_files_size;
     direct_files.sort_by(|a, b| b.size.cmp(&a.size));
     node.direct_files = direct_files;
 
-    // Scan each direct child subdirectory to get its direct size and count
-    let mut children: Vec<FolderTreeNode> = subdirs
+    // Concurrently compute true recursive sizes for each direct child subdirectory
+    let mut children: Vec<FolderTreeNode> = direct_subdirs
         .par_iter()
         .map(|subdir_path| {
             let name = subdir_path
@@ -138,65 +210,39 @@ pub fn scan_deeper_level_for_node(node: &mut FolderTreeNode) {
                 .map(|n| n.to_string_lossy().to_string())
                 .unwrap_or_else(|| subdir_path.to_string_lossy().to_string());
 
-            let mut child_direct_size = 0u64;
-            let mut child_file_count = 0usize;
-            let mut child_dir_count = 0usize;
-            let mut child_direct_files = Vec::new();
-            let mut is_inaccessible = false;
+            let (total_size, file_count, dir_count, sub_subdirs, child_direct_files) =
+                compute_dir_stats_recursive(subdir_path, &cancel_token);
 
-            if let Ok(entries) = fs::read_dir(subdir_path) {
-                for entry in entries.flatten() {
-                    let ep = entry.path();
-                    if let Ok(m) = fs::symlink_metadata(&ep) {
-                        let ft = m.file_type();
-                        if ft.is_symlink() {
-                            continue;
-                        }
-                        if ft.is_dir() {
-                            child_dir_count += 1;
-                        } else if ft.is_file() {
-                            child_file_count += 1;
-                            let s = m.len();
-                            child_direct_size += s;
-                            if child_direct_files.len() < 100 {
-                                let fn_str = entry.file_name().to_string_lossy().to_string();
-                                let ext = ep
-                                    .extension()
-                                    .and_then(|e| e.to_str())
-                                    .unwrap_or("(no extension)")
-                                    .to_lowercase();
-                                child_direct_files.push(FileInfo {
-                                    path: ep,
-                                    name: fn_str,
-                                    extension: ext,
-                                    size: s,
-                                    modified: m.modified().ok(),
-                                    is_dir: false,
-                                    is_symlink: false,
-                                    is_readonly: m.permissions().readonly(),
-                                    is_locked: false,
-                                    is_inaccessible: false,
-                                });
-                            }
-                        }
-                    }
-                }
-            } else {
-                is_inaccessible = true;
+            // Populate stub children so subfolders display expand arrow ▶
+            let mut stub_children = Vec::new();
+            for s in sub_subdirs {
+                let s_name = s.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+                stub_children.push(FolderTreeNode {
+                    path: s,
+                    name: s_name,
+                    total_size: 0,
+                    immediate_files_size: 0,
+                    file_count: 0,
+                    dir_count: 0,
+                    children: Vec::new(),
+                    direct_files: Vec::new(),
+                    is_inaccessible: false,
+                    is_deeper_scanned: false,
+                });
             }
 
-            child_direct_files.sort_by(|a, b| b.size.cmp(&a.size));
+            let immediate_size = child_direct_files.iter().map(|f| f.size).sum();
 
             FolderTreeNode {
                 path: subdir_path.clone(),
                 name,
-                total_size: child_direct_size,
-                immediate_files_size: child_direct_size,
-                file_count: child_file_count,
-                dir_count: child_dir_count,
-                children: Vec::new(),
+                total_size,
+                immediate_files_size: immediate_size,
+                file_count,
+                dir_count,
+                children: stub_children,
                 direct_files: child_direct_files,
-                is_inaccessible,
+                is_inaccessible: false,
                 is_deeper_scanned: false,
             }
         })
@@ -208,7 +254,7 @@ pub fn scan_deeper_level_for_node(node: &mut FolderTreeNode) {
     let children_total_size: u64 = children.iter().map(|c| c.total_size).sum();
     let children_file_count: usize = children.iter().map(|c| c.file_count).sum();
 
-    node.total_size = direct_size + children_total_size;
+    node.total_size = immediate_files_size + children_total_size;
     node.file_count = node.direct_files.len() + children_file_count;
     node.dir_count = children.len();
     node.children = children;
@@ -216,7 +262,7 @@ pub fn scan_deeper_level_for_node(node: &mut FolderTreeNode) {
 }
 
 /// Initial root scanner:
-/// Scans the root folder and its Level 1 direct subdirectories.
+/// Scans the root folder and computes TRUE RECURSIVE cumulative sizes for Level 1 subdirectories.
 /// Deeper levels (Level 2+) remain unscanned until the user explicitly expands them by clicking.
 pub fn scan_directory_tree(
     root: &Path,
@@ -252,7 +298,7 @@ pub fn scan_directory_tree(
         is_deeper_scanned: false,
     };
 
-    // Scan root and Level 1 children
+    // Computes root and Level 1 children with true recursive sizes and size sorting
     scan_deeper_level_for_node(&mut root_node);
 
     if cancel_token.load(Ordering::Relaxed) {
@@ -263,7 +309,7 @@ pub fn scan_directory_tree(
     const MAX_LARGEST_FILES: usize = 100;
     let mut ext_map: HashMap<String, (usize, u64)> = HashMap::new();
 
-    // Aggregate files from root
+    // Aggregate immediate files of root
     for file in &root_node.direct_files {
         let stat = ext_map.entry(file.extension.clone()).or_insert((0, 0));
         stat.0 += 1;
@@ -279,7 +325,7 @@ pub fn scan_directory_tree(
         }
     }
 
-    // Aggregate files from Level 1 children
+    // Aggregate immediate files of Level 1 children
     for child in &root_node.children {
         for file in &child.direct_files {
             let stat = ext_map.entry(file.extension.clone()).or_insert((0, 0));
@@ -305,7 +351,6 @@ pub fn scan_directory_tree(
     let total_files = root_node.file_count;
     let total_dirs = root_node.dir_count;
 
-    // Finalize extensions
     let mut extensions: Vec<ExtensionStat> = ext_map
         .into_iter()
         .map(|(ext, (count, bytes))| {

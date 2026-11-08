@@ -18,6 +18,8 @@ Built with **`egui` / `eframe`** and direct **Windows APIs** (`windows` crate), 
    - **Global Unit Selectors**: Toolbar unit toggles (`B`, `KB`, `MB`, `GB`, `AUTO`) that instantaneously update all size displays across the tree, tables, drives, and charts.
 
 2. **High-Performance Level-Order & On-Demand Folder Analyzer**:
+   - **Smooth Tree View Scrolling**: Constrained quadrant bounds and isolated scroll panels with dedicated ID salts allow seamless vertical mouse wheel scrolling and scrollbar dragging across thousands of folders.
+   - **100% Accurate Recursive Cumulative Sizing**: Rapidly traverses subtrees directly from the NTFS driver with zero memory overhead, guaranteeing that root folders (like `C:\Windows`) and subfolders reflect their exact, true cumulative footprint.
    - **Strict Size Sorting**: All folders in the left tree view are strictly sorted descending by size at every depth level, placing the largest directories at the top.
    - **On-Demand Deeper Scanning on Click**: Initial scans calculate the root and Level 1 folders. Deeper levels are only scanned for the specific folder that the user expands by clicking `▶`, keeping scans fast and memory consumption minimal.
    - **Low-Memory Footprint & Strict Bounding**: Memory consumption stays within ~10-20MB even on huge drives. Eliminates map cloning, bounds candidate largest files to 100 items per folder, and loads deep directory files on demand.

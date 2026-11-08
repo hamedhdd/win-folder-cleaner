@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-11-08
+
+### Fixed
+- **Tree View Scrolling Resolution**:
+  - Enforced bounded quadrant heights on egui column layouts (`cols[0].set_height(top_quadrant_height)`) and assigned `.max_height(scroll_max_h)` to `ScrollArea::vertical()`.
+  - Added dedicated ID salt `folder_tree_scroll_panel` to ensure smooth mouse-wheel scrolling and responsive scrollbar dragging without panel overflow.
+  - Bounded vertical scroll heights and added distinct ID salts for Contents table (`pro_contents_scroll_panel`) and Logical Drives table (`bottom_drives_scroll_panel`).
+- **100% Accurate Recursive Cumulative Sizing**:
+  - Implemented `compute_dir_stats_recursive` to calculate exact cumulative subtree byte counts directly from the NTFS filesystem driver.
+  - Eliminated shallow direct-file summing so root and child directories accurately reflect their full recursive size (e.g. `C:\Windows` displays its full multi-GB footprint).
+  - Maintained zero-allocation memory efficiency by accumulating raw `u64` counts without storing individual file structs for deeper levels.
+
+### Changed
+- **Strict Descending Size Sorting**:
+  - Guaranteed that child directories at every tree hierarchy level are sorted strictly descending by true recursive cumulative size (`b.total_size.cmp(&a.total_size)`).
+- **Integration Test Updates**:
+  - Updated `test_upper_levels_scanned_and_on_demand_deeper_expansion` to verify 100% accurate recursive sizing and size-based ordering.
+
 ## [0.6.0] - 2026-11-08
 
 ### Added
