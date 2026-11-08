@@ -2,7 +2,7 @@
 
 A high-performance, native Windows desktop application written in **Rust** for recursive storage diagnostics, file size analysis, process lock detection, and administrative cleanup operations.
 
-Built with **`egui` / `eframe`** and direct **Windows APIs** (`windows` crate), with **zero PowerShell dependencies**.
+Built with **`egui` / `eframe`** powered by **`wgpu` (DirectX 12 / DirectX 11 / Microsoft WARP software fallback)** and direct **Windows APIs** (`windows` crate), with **zero PowerShell dependencies**. Runs on 100% of Windows 10/11 machines, including Remote Desktop (RDP) sessions, virtual machines, and servers without hardware OpenGL.
 
 ---
 

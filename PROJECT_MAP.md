@@ -5,7 +5,7 @@
 ```text
 win-folder-cleaner/
 ├── .cargo/config.toml               # MSVC static CRT configuration (+crt-static for portable single-binary execution)
-├── Cargo.toml                       # Project manifest with eframe, windows, rayon, crossbeam-channel, rfd
+├── Cargo.toml                       # Project manifest with eframe (wgpu DirectX/WARP engine), windows, rayon, crossbeam-channel, rfd
 ├── README.md                        # User and developer documentation with build and usage instructions
 ├── CHANGELOG.md                     # Living changelog following Keep a Changelog conventions
 ├── PROJECT_MAP.md                   # This living architectural codebase map
