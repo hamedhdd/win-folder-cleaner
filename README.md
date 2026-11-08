@@ -17,7 +17,10 @@ Built with **`egui` / `eframe`** and direct **Windows APIs** (`windows` crate), 
    - **Bottom Status Bar**: Displays real-time operational status (`Idle` / `Scanning: ...`), `X Files, Y Folders`, total size, and progress indicator.
    - **Global Unit Selectors**: Toolbar unit toggles (`B`, `KB`, `MB`, `GB`, `AUTO`) that instantaneously update all size displays across the tree, tables, drives, and charts.
 
-2. **High-Performance Folder Size Analyzer & Interactive Tree View**:
+2. **High-Performance Level-Order (Breadth-First) Folder Analyzer**:
+   - **Upper-Level First Scanning**: Recursively scans upper-level folders (depth 0, depth 1, depth 2) first before descending into deeper subdirectories. This provides instantaneous visibility into high-level disk allocations within milliseconds.
+   - **Multithreaded Rayon Parallelism**: Sibling folders at each depth level are processed concurrently across all CPU cores via `rayon::par_iter()`, maximizing I/O queue depth on modern NVMe and SSD drives.
+   - **Live Tree Streaming to UI**: Emits real-time partial tree snapshots (`partial_tree`) as upper levels finish scanning, so the tree view, table, and pie chart populate immediately while deep background scanning continues.
    - **Hierarchical Folder Tree View**: Recursively analyzes and models every folder on any selected drive or directory into an interactive, expandable tree hierarchy (`▶` / `▼`).
    - **Proportional Size Bars**: Visual capacity bar for each directory node showing percentage allocation relative to parent or root.
    - **Detailed Folder Inspector**: Click any folder in the tree to inspect its immediate files, total subtree size, file counts, and trigger focused analysis or content cleanup.

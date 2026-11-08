@@ -201,6 +201,8 @@ pub struct ScanProgress {
     pub is_completed: bool,
     pub cancelled: bool,
     pub error: Option<String>,
+    pub current_depth: usize,
+    pub partial_tree: Option<FolderTreeNode>,
 }
 
 /// Predefined or custom temporary directory locations

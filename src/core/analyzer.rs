@@ -6,6 +6,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use chrono::Local;
 use crossbeam_channel::Sender;
+use rayon::prelude::*;
 
 use crate::core::types::{
     DirEntrySummary, DirScanSummary, ExtensionStat, FileInfo, FolderTreeNode, ScanProgress,
@@ -27,19 +28,147 @@ impl PartialOrd for LargestFileItem {
     }
 }
 
+#[derive(Clone)]
 struct DirNodeData {
     path: PathBuf,
     name: String,
     direct_size: u64,
+    direct_file_count: usize,
     direct_files: Vec<FileInfo>,
     child_subdirs: Vec<PathBuf>,
     is_inaccessible: bool,
 }
 
-/// Recursively scans the specified folder, gathering size, file counts, largest files,
-/// subdirectories, extension distributions, full hierarchical folder tree, and inaccessible statistics.
+/// Output data from scanning a single directory
+struct SingleDirScanOutput {
+    path: PathBuf,
+    name: String,
+    direct_size: u64,
+    file_count: usize,
+    direct_files: Vec<FileInfo>,
+    subdirs: Vec<PathBuf>,
+    inaccessible_count: usize,
+    is_inaccessible: bool,
+    ext_stats: HashMap<String, (usize, u64)>,
+    largest_files: Vec<FileInfo>,
+}
+
+/// Scans a single directory without descending into child subdirectories.
+/// Child directories are collected and returned so they can be processed level-by-level.
+fn scan_single_directory(
+    dir_path: &Path,
+    cancel_token: &Arc<AtomicBool>,
+) -> SingleDirScanOutput {
+    let dir_name = dir_path
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| dir_path.to_string_lossy().to_string());
+
+    let mut output = SingleDirScanOutput {
+        path: dir_path.to_path_buf(),
+        name: dir_name,
+        direct_size: 0,
+        file_count: 0,
+        direct_files: Vec::new(),
+        subdirs: Vec::new(),
+        inaccessible_count: 0,
+        is_inaccessible: false,
+        ext_stats: HashMap::new(),
+        largest_files: Vec::new(),
+    };
+
+    let entries = match fs::read_dir(dir_path) {
+        Ok(iter) => iter,
+        Err(_) => {
+            output.inaccessible_count = 1;
+            output.is_inaccessible = true;
+            return output;
+        }
+    };
+
+    for entry in entries {
+        if cancel_token.load(Ordering::Relaxed) {
+            break;
+        }
+
+        let entry = match entry {
+            Ok(e) => e,
+            Err(_) => {
+                output.inaccessible_count += 1;
+                continue;
+            }
+        };
+
+        let entry_path = entry.path();
+
+        let metadata = match fs::symlink_metadata(&entry_path) {
+            Ok(m) => m,
+            Err(_) => {
+                output.inaccessible_count += 1;
+                continue;
+            }
+        };
+
+        let file_type = metadata.file_type();
+
+        // DO NOT follow symlinks or junctions/reparse points to avoid infinite loops and boundary crossing
+        if file_type.is_symlink() {
+            continue;
+        }
+
+        if file_type.is_dir() {
+            output.subdirs.push(entry_path);
+        } else if file_type.is_file() {
+            output.file_count += 1;
+            let size = metadata.len();
+            output.direct_size += size;
+
+            let name = entry.file_name().to_string_lossy().to_string();
+            let ext = entry_path
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("(no extension)")
+                .to_lowercase();
+
+            let modified = metadata.modified().ok();
+            let readonly = metadata.permissions().readonly();
+
+            let file_info = FileInfo {
+                path: entry_path,
+                name,
+                extension: ext.clone(),
+                size,
+                modified,
+                is_dir: false,
+                is_symlink: false,
+                is_readonly: readonly,
+                is_locked: false,
+                is_inaccessible: false,
+            };
+
+            // Store immediate files (up to 100 for fast UI preview)
+            if output.direct_files.len() < 100 {
+                output.direct_files.push(file_info.clone());
+            }
+
+            output.largest_files.push(file_info);
+
+            let stat = output.ext_stats.entry(ext).or_insert((0, 0));
+            stat.0 += 1;
+            stat.1 += size;
+        }
+    }
+
+    output
+}
+
+/// High-performance Breadth-First (Level-Order) directory scanner.
 ///
-/// Respects cancellation token and delivers non-blocking progress updates via channel.
+/// Scans upper-level folders first before descending into deeper levels.
+/// At each level, multiple sibling folders are scanned concurrently across CPU cores using Rayon.
+///
+/// Delivers live progress updates with partial hierarchical tree snapshots so the UI
+/// displays upper-level folders almost immediately while deeper levels continue in the background.
 pub fn scan_directory_tree(
     root: &Path,
     cancel_token: Arc<AtomicBool>,
@@ -63,28 +192,19 @@ pub fn scan_directory_tree(
     const MAX_LARGEST_FILES: usize = 100;
 
     let mut ext_map: HashMap<String, (usize, u64)> = HashMap::new();
-    let mut direct_subdirs: HashMap<PathBuf, (u64, usize, usize)> = HashMap::new();
     let mut dir_map: HashMap<PathBuf, DirNodeData> = HashMap::new();
 
-    // Enumerate first-level subdirectories to calculate their direct and cumulative sizes
-    if let Ok(entries) = fs::read_dir(&root_path) {
-        for entry in entries.flatten() {
-            if let Ok(ft) = entry.file_type() {
-                if ft.is_dir() && !ft.is_symlink() {
-                    direct_subdirs.insert(entry.path(), (0, 0, 0));
-                }
-            }
-        }
-    }
-
-    let mut stack: Vec<PathBuf> = vec![root_path.clone()];
+    // Level-by-level breadth-first traversal: upper levels scanned first, then deeper levels
+    let mut current_level: Vec<PathBuf> = vec![root_path.clone()];
+    let mut current_depth: usize = 0;
     let mut last_progress_time = Instant::now();
+    let mut last_tree_snapshot_time = Instant::now();
 
-    while let Some(current_dir) = stack.pop() {
+    while !current_level.is_empty() {
         if cancel_token.load(Ordering::Relaxed) {
             if let Some(tx) = &progress_tx {
                 let _ = tx.send(ScanProgress {
-                    current_path: current_dir.to_string_lossy().to_string(),
+                    current_path: "Scan cancelled".to_string(),
                     files_scanned: total_files,
                     dirs_scanned: total_dirs,
                     bytes_scanned: total_bytes,
@@ -92,17 +212,100 @@ pub fn scan_directory_tree(
                     is_completed: false,
                     cancelled: true,
                     error: None,
+                    current_depth,
+                    partial_tree: None,
                 });
             }
             return Err("Scan cancelled by user.".to_string());
         }
 
-        // Throttle progress updates to ~10 times per second
-        if last_progress_time.elapsed() >= Duration::from_millis(100) {
+        // Process all directories at current_depth.
+        // When there are multiple folders at this depth, scan them concurrently with Rayon.
+        let results: Vec<SingleDirScanOutput> = if current_level.len() > 1 {
+            current_level
+                .par_iter()
+                .map(|path| scan_single_directory(path, &cancel_token))
+                .collect()
+        } else {
+            current_level
+                .iter()
+                .map(|path| scan_single_directory(path, &cancel_token))
+                .collect()
+        };
+
+        if cancel_token.load(Ordering::Relaxed) {
+            return Err("Scan cancelled by user.".to_string());
+        }
+
+        let mut next_level: Vec<PathBuf> = Vec::new();
+
+        // Aggregate results from this level
+        for res in results {
+            total_files += res.file_count;
+            total_dirs += res.subdirs.len();
+            total_bytes += res.direct_size;
+            accessible_bytes += res.direct_size;
+            inaccessible_files += res.inaccessible_count;
+
+            for (ext, (cnt, bts)) in res.ext_stats {
+                let stat = ext_map.entry(ext).or_insert((0, 0));
+                stat.0 += cnt;
+                stat.1 += bts;
+            }
+
+            for file in res.largest_files {
+                if min_heap.len() < MAX_LARGEST_FILES {
+                    min_heap.push(LargestFileItem(file));
+                } else if let Some(smallest) = min_heap.peek() {
+                    if file.size > smallest.0.size {
+                        min_heap.pop();
+                        min_heap.push(LargestFileItem(file));
+                    }
+                }
+            }
+
+            next_level.extend(res.subdirs.clone());
+
+            dir_map.insert(
+                res.path.clone(),
+                DirNodeData {
+                    path: res.path,
+                    name: res.name,
+                    direct_size: res.direct_size,
+                    direct_file_count: res.file_count,
+                    direct_files: res.direct_files,
+                    child_subdirs: res.subdirs,
+                    is_inaccessible: res.is_inaccessible,
+                },
+            );
+        }
+
+        // Emit live partial tree snapshot:
+        // Always emit on early levels (depth 0, 1, 2) for immediate UI responsiveness,
+        // and throttle to every 250ms on deeper levels to conserve CPU.
+        let should_emit_partial = current_depth <= 2
+            || last_tree_snapshot_time.elapsed() >= Duration::from_millis(250);
+
+        let partial_tree = if should_emit_partial && progress_tx.is_some() {
+            last_tree_snapshot_time = Instant::now();
+            let mut snapshot_map = dir_map.clone();
+            build_folder_tree(&root_path, &mut snapshot_map)
+        } else {
+            None
+        };
+
+        // Throttle progress updates to ~10 times per second or on partial tree emission
+        if last_progress_time.elapsed() >= Duration::from_millis(100) || partial_tree.is_some() {
             last_progress_time = Instant::now();
             if let Some(tx) = &progress_tx {
+                let status_msg = if current_depth == 0 {
+                    format!("Scanning root level: {}", root_path.to_string_lossy())
+                } else {
+                    format!("Level {} ({} queued folders)", current_depth, next_level.len())
+                };
+
                 let _ = tx.send(ScanProgress {
-                    current_path: current_dir.to_string_lossy().to_string(),
+                    current_path: status_msg,
                     files_scanned: total_files,
                     dirs_scanned: total_dirs,
                     bytes_scanned: total_bytes,
@@ -110,165 +313,21 @@ pub fn scan_directory_tree(
                     is_completed: false,
                     cancelled: false,
                     error: None,
+                    current_depth,
+                    partial_tree,
                 });
             }
         }
 
-        let dir_name = current_dir
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_else(|| current_dir.to_string_lossy().to_string());
-
-        let mut node_data = DirNodeData {
-            path: current_dir.clone(),
-            name: dir_name,
-            direct_size: 0,
-            direct_files: Vec::new(),
-            child_subdirs: Vec::new(),
-            is_inaccessible: false,
-        };
-
-        let entries = match fs::read_dir(&current_dir) {
-            Ok(iter) => iter,
-            Err(_) => {
-                inaccessible_files += 1;
-                node_data.is_inaccessible = true;
-                dir_map.insert(current_dir.clone(), node_data);
-                continue;
-            }
-        };
-
-        for entry in entries {
-            if cancel_token.load(Ordering::Relaxed) {
-                return Err("Scan cancelled by user.".to_string());
-            }
-
-            let entry = match entry {
-                Ok(e) => e,
-                Err(_) => {
-                    inaccessible_files += 1;
-                    continue;
-                }
-            };
-
-            let entry_path = entry.path();
-            let metadata = match fs::symlink_metadata(&entry_path) {
-                Ok(m) => m,
-                Err(_) => {
-                    inaccessible_files += 1;
-                    continue;
-                }
-            };
-
-            let file_type = metadata.file_type();
-
-            // DO NOT follow symlinks or junctions/reparse points to avoid infinite loops and boundary traversal
-            if file_type.is_symlink() {
-                continue;
-            }
-
-            if file_type.is_dir() {
-                total_dirs += 1;
-                stack.push(entry_path.clone());
-                node_data.child_subdirs.push(entry_path.clone());
-
-                // Attribute to direct subdirectory if within one
-                for (subdir_path, stats) in direct_subdirs.iter_mut() {
-                    if entry_path.starts_with(subdir_path) {
-                        stats.2 += 1; // dir count
-                        break;
-                    }
-                }
-            } else if file_type.is_file() {
-                total_files += 1;
-                let size = metadata.len();
-                total_bytes += size;
-                accessible_bytes += size;
-                node_data.direct_size += size;
-
-                let name = entry.file_name().to_string_lossy().to_string();
-                let ext = entry_path
-                    .extension()
-                    .and_then(|e| e.to_str())
-                    .unwrap_or("(no extension)")
-                    .to_lowercase();
-
-                let modified = metadata.modified().ok();
-                let readonly = metadata.permissions().readonly();
-
-                let file_info = FileInfo {
-                    path: entry_path.clone(),
-                    name,
-                    extension: ext.clone(),
-                    size,
-                    modified,
-                    is_dir: false,
-                    is_symlink: false,
-                    is_readonly: readonly,
-                    is_locked: false,
-                    is_inaccessible: false,
-                };
-
-                // Track immediate files (up to 100 per folder for inspector)
-                if node_data.direct_files.len() < 100 {
-                    node_data.direct_files.push(file_info.clone());
-                }
-
-                // Track largest files across whole scan (top N)
-                if min_heap.len() < MAX_LARGEST_FILES {
-                    min_heap.push(LargestFileItem(file_info));
-                } else if let Some(smallest) = min_heap.peek() {
-                    if size > smallest.0.size {
-                        min_heap.pop();
-                        min_heap.push(LargestFileItem(file_info));
-                    }
-                }
-
-                // Extension aggregation
-                let stat = ext_map.entry(ext).or_insert((0, 0));
-                stat.0 += 1;
-                stat.1 += size;
-
-                // Attribute to direct subdirectory if within one
-                for (subdir_path, stats) in direct_subdirs.iter_mut() {
-                    if entry_path.starts_with(subdir_path) {
-                        stats.0 += size;
-                        stats.1 += 1;
-                        break;
-                    }
-                }
-            }
-        }
-
-        dir_map.insert(current_dir.clone(), node_data);
+        current_level = next_level;
+        current_depth += 1;
     }
 
     // Finalize largest files list in descending order
     let mut largest_files: Vec<FileInfo> = min_heap.into_iter().map(|item| item.0).collect();
     largest_files.sort_by(|a, b| b.size.cmp(&a.size));
 
-    // Finalize largest subdirectories
-    let mut largest_subdirs: Vec<DirEntrySummary> = direct_subdirs
-        .into_iter()
-        .map(|(path, (size, file_count, dir_count))| {
-            let name = path
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_else(|| path.to_string_lossy().to_string());
-            DirEntrySummary {
-                path,
-                name,
-                total_size: size,
-                immediate_size: size,
-                file_count,
-                dir_count,
-                has_subdirs: dir_count > 0,
-            }
-        })
-        .collect();
-    largest_subdirs.sort_by(|a, b| b.total_size.cmp(&a.total_size));
-
-    // Finalize extensions
+    // Finalize extensions distribution
     let mut extensions: Vec<ExtensionStat> = ext_map
         .into_iter()
         .map(|(ext, (count, bytes))| {
@@ -287,8 +346,25 @@ pub fn scan_directory_tree(
         .collect();
     extensions.sort_by(|a, b| b.total_bytes.cmp(&a.total_bytes));
 
-    // Assemble full hierarchical folder tree
+    // Assemble final full hierarchical folder tree
     let root_tree = build_folder_tree(&root_path, &mut dir_map);
+
+    // Finalize largest direct subdirectories from the root tree children
+    let mut largest_subdirs: Vec<DirEntrySummary> = Vec::new();
+    if let Some(tree) = &root_tree {
+        for child in &tree.children {
+            largest_subdirs.push(DirEntrySummary {
+                path: child.path.clone(),
+                name: child.name.clone(),
+                total_size: child.total_size,
+                immediate_size: child.immediate_files_size,
+                file_count: child.file_count,
+                dir_count: child.dir_count,
+                has_subdirs: !child.children.is_empty(),
+            });
+        }
+    }
+    largest_subdirs.sort_by(|a, b| b.total_size.cmp(&a.total_size));
 
     let duration_ms = start_time.elapsed().as_millis();
 
@@ -303,7 +379,7 @@ pub fn scan_directory_tree(
         largest_files,
         largest_subdirs,
         extensions,
-        root_tree,
+        root_tree: root_tree.clone(),
         scan_timestamp: Local::now(),
         duration_ms,
     };
@@ -318,6 +394,8 @@ pub fn scan_directory_tree(
             is_completed: true,
             cancelled: false,
             error: None,
+            current_depth,
+            partial_tree: root_tree,
         });
     }
 
@@ -330,7 +408,7 @@ fn build_folder_tree(
 ) -> Option<FolderTreeNode> {
     let data = dir_map.remove(current_path)?;
     let mut total_size = data.direct_size;
-    let mut file_count = data.direct_files.len();
+    let mut file_count = data.direct_file_count;
     let mut dir_count = data.child_subdirs.len();
     let mut children = Vec::new();
 

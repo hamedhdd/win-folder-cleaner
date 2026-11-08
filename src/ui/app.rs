@@ -241,6 +241,38 @@ impl WinFolderCleanerApp {
                 self.current_scan_path = progress.current_path;
                 self.current_files_count = progress.files_scanned;
                 self.current_bytes_count = progress.bytes_scanned;
+
+                if let Some(tree) = progress.partial_tree {
+                    // Update explorer view in real time with upper-level folders
+                    if let Some(summary) = &mut self.explorer_state.scan_summary {
+                        summary.total_bytes = progress.bytes_scanned;
+                        summary.accessible_bytes = progress.bytes_scanned;
+                        summary.total_files = progress.files_scanned;
+                        summary.total_dirs = progress.dirs_scanned;
+                        summary.inaccessible_files = progress.inaccessible_count;
+                        summary.root_tree = Some(tree.clone());
+                    } else {
+                        self.explorer_state.scan_summary = Some(DirScanSummary {
+                            root_path: PathBuf::from(&self.explorer_state.selected_path),
+                            total_bytes: progress.bytes_scanned,
+                            accessible_bytes: progress.bytes_scanned,
+                            inaccessible_bytes: 0,
+                            total_files: progress.files_scanned,
+                            total_dirs: progress.dirs_scanned,
+                            inaccessible_files: progress.inaccessible_count,
+                            largest_files: Vec::new(),
+                            largest_subdirs: Vec::new(),
+                            extensions: Vec::new(),
+                            root_tree: Some(tree.clone()),
+                            scan_timestamp: chrono::Local::now(),
+                            duration_ms: 0,
+                        });
+                    }
+
+                    if self.explorer_state.selected_node.is_none() {
+                        self.explorer_state.selected_node = Some(tree);
+                    }
+                }
             }
         }
 

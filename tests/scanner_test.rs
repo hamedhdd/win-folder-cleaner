@@ -80,3 +80,56 @@ fn test_scanner_cancellation() {
 
     let _ = fs::remove_dir_all(&temp_root);
 }
+
+#[test]
+fn test_upper_levels_scanned_before_deeper_levels() {
+    let temp_root = std::env::temp_dir().join("test_win_folder_cleaner_levels");
+    let _ = fs::remove_dir_all(&temp_root);
+    fs::create_dir_all(&temp_root).expect("create test root");
+
+    // Level 0: root contains level1_a and level1_b
+    let level1_a = temp_root.join("level1_a");
+    let level1_b = temp_root.join("level1_b");
+    fs::create_dir_all(&level1_a).expect("create level1_a");
+    fs::create_dir_all(&level1_b).expect("create level1_b");
+
+    // Level 1: level1_a contains level2_nested
+    let level2_nested = level1_a.join("level2_nested");
+    fs::create_dir_all(&level2_nested).expect("create level2_nested");
+
+    // Level 2: level2_nested contains deep file
+    let deep_file = level2_nested.join("deep.txt");
+    let mut f_deep = File::create(&deep_file).expect("create deep file");
+    f_deep.write_all(&vec![b'D'; 250]).expect("write deep file");
+
+    // Level 1: level1_b contains shallow file
+    let shallow_file = level1_b.join("shallow.txt");
+    let mut f_shallow = File::create(&shallow_file).expect("create shallow file");
+    f_shallow.write_all(&vec![b'S'; 100]).expect("write shallow file");
+
+    let (progress_tx, progress_rx) = crossbeam_channel::unbounded();
+    let cancel_token = Arc::new(AtomicBool::new(false));
+
+    let summary = scan_directory_tree(&temp_root, cancel_token, Some(progress_tx))
+        .expect("scan should succeed");
+
+    assert_eq!(summary.total_files, 2);
+    assert_eq!(summary.total_dirs, 3);
+    assert_eq!(summary.total_bytes, 350);
+
+    // Verify progress reported depths in strictly non-decreasing order: 0 -> 1 -> 2
+    let mut depths = Vec::new();
+    while let Ok(progress) = progress_rx.try_recv() {
+        depths.push(progress.current_depth);
+    }
+
+    assert!(!depths.is_empty());
+    // Verify depths order is non-decreasing (upper levels first, deeper levels next)
+    for w in depths.windows(2) {
+        assert!(w[0] <= w[1], "Depth should be non-decreasing: {} > {}", w[0], w[1]);
+    }
+    assert_eq!(depths[0], 0, "First scanned level must be root (depth 0)");
+
+    // Clean up
+    let _ = fs::remove_dir_all(&temp_root);
+}

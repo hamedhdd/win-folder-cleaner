@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-11-08
+
+### Added
+- **Level-Order (Breadth-First) Directory Traversal**:
+  - Completely restructured scanner to prioritize upper-level folders first (depth 0, depth 1, depth 2, etc.) before descending into deeper nested directory trees.
+  - Solves the DFS bottleneck where deep folders stalled scanning of sibling root folders.
+- **Parallel Level Traversal via Rayon**:
+  - At each hierarchy level, multiple sibling folders are scanned concurrently across all available CPU cores using `rayon::par_iter()`.
+  - Maximizes disk I/O queue depth and NVMe throughput while preserving strict level-order boundaries.
+- **Live Incremental Hierarchical Tree Streaming**:
+  - Background scanner emits live partial tree snapshots (`ScanProgress.partial_tree`) directly to the UI thread upon completing upper levels and every 250ms thereafter.
+  - The Folder Explorer tree view, contents table, and pie chart immediately display top-level directories while deeper levels continue in the background.
+- **Accurate Subtree Cumulative Metrics**:
+  - Replaced prefix-based attribution with post-order hierarchical tree aggregation, guaranteeing 100% accurate byte and file counts across all directory depths.
+- **Automated Verification Test**:
+  - Added `test_upper_levels_scanned_before_deeper_levels` to test suite, guaranteeing strictly non-decreasing depth order (0 -> 1 -> 2) during traversal.
+
 ## [0.3.0] - 2026-11-08
 
 ### Added

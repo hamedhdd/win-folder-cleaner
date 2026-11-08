@@ -18,7 +18,7 @@ win-folder-cleaner/
 │   │   ├── restart_mgr.rs           # Windows Restart Manager API integration for detecting file-locking processes
 │   │   ├── reboot_del.rs            # Win32 MoveFileExW wrapper with MOVEFILE_DELAY_UNTIL_REBOOT
 │   │   ├── temp_dirs.rs             # System & user temp location discovery (C:\Windows\Temp, %TEMP%, AppData, Profiles)
-│   │   ├── analyzer.rs              # Multithreaded recursive directory traversal, size calculations, and extension stats
+│   │   ├── analyzer.rs              # Breadth-first (level-order) traversal, upper-levels first, Rayon parallelization, live tree streaming
 │   │   └── cleaner.rs               # Safe deletion engine, content-only root retention, force-delete, and dry-run
 │   └── ui/                          # Native desktop graphical user interface using egui & eframe
 │       ├── mod.rs                   # Re-exports UI views, theme, and application state
@@ -77,7 +77,7 @@ flowchart TD
 | `is_elevated` | `core::security` | Any Token | Queries Process Token Elevation via Win32 `GetTokenInformation`. |
 | `relaunch_as_admin` | `core::security` | Standard User -> Admin | Invokes `ShellExecuteExW` with verb `runas` to elevate while preserving arguments. |
 | `is_critical_system_path` | `core::security` | None | Validates paths against canonical Windows protected roots (`C:\Windows`, `System32`, `Program Files`, etc.). |
-| `scan_directory_tree` | `core::analyzer` | Read Permissions | Recursively calculates file counts, sizes, extensions, skipping directory symlinks/junctions. |
+| `scan_directory_tree` | `core::analyzer` | Read Permissions | Level-order (BFS) parallel directory traversal scanning upper levels first with live tree streaming, skipping symlinks/junctions. |
 | `clean_directory_contents` | `core::cleaner` | Write Permissions | Deletes contents of a folder recursively while strictly preserving the root directory itself. |
 | `take_ownership` | `core::security` | Elevated Admin | Executes `takeown /F "<path>" /A /R /D Y` without shell or PowerShell wrappers. |
 | `grant_administrators_acl`| `core::security` | Elevated Admin | Executes `icacls "<path>" /grant *S-1-5-32-544:(OI)(CI)F /T /C` preserving other ACLs. |
