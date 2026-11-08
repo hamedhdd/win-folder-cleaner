@@ -137,6 +137,9 @@ impl WinFolderCleanerApp {
         self.current_scan_path = path.to_string_lossy().to_string();
         self.current_files_count = 0;
         self.current_bytes_count = 0;
+        self.explorer_state.pending_expansions.clear();
+        self.explorer_state.scanned_paths.clear();
+        self.explorer_state.scanned_paths.insert(path.clone());
 
         self.scan_cancel_token.store(false, Ordering::Relaxed);
         let cancel_token = self.scan_cancel_token.clone();
@@ -243,14 +246,19 @@ impl WinFolderCleanerApp {
                 self.current_bytes_count = progress.bytes_scanned;
 
                 if let Some(tree) = progress.partial_tree {
-                    // Update explorer view in real time with upper-level folders
+                    // Update explorer view in real time preserving deeper scanned subtrees
                     if let Some(summary) = &mut self.explorer_state.scan_summary {
                         summary.total_bytes = progress.bytes_scanned;
                         summary.accessible_bytes = progress.bytes_scanned;
                         summary.total_files = progress.files_scanned;
                         summary.total_dirs = progress.dirs_scanned;
                         summary.inaccessible_files = progress.inaccessible_count;
-                        summary.root_tree = Some(tree.clone());
+
+                        if let Some(root_node) = &mut summary.root_tree {
+                            root_node.merge_preserving_expansions(&tree);
+                        } else {
+                            summary.root_tree = Some(tree.clone());
+                        }
                     } else {
                         self.explorer_state.scan_summary = Some(DirScanSummary {
                             root_path: PathBuf::from(&self.explorer_state.selected_path),
@@ -271,7 +279,7 @@ impl WinFolderCleanerApp {
 
                     if let Some(sel) = &mut self.explorer_state.selected_node {
                         if sel.path == tree.path {
-                            *sel = tree.clone();
+                            sel.merge_preserving_expansions(&tree);
                         }
                     } else {
                         self.explorer_state.selected_node = Some(tree);
@@ -296,16 +304,39 @@ impl WinFolderCleanerApp {
                                 summary.total_files, summary.total_bytes, summary.inaccessible_files, summary.duration_ms
                             ),
                         });
-                        if let Some(root_tree) = &summary.root_tree {
+                        if let Some(summary_root) = &summary.root_tree {
+                            self.explorer_state.scanned_paths.insert(summary.root_path.clone());
+                            if let Some(current_summary) = &mut self.explorer_state.scan_summary {
+                                if let Some(current_root) = &mut current_summary.root_tree {
+                                    current_root.merge_preserving_expansions(summary_root);
+                                    current_root.is_deeper_scanned = true;
+                                    current_root.is_scanning = false;
+                                } else {
+                                    current_summary.root_tree = Some(summary_root.clone());
+                                }
+                                current_summary.total_bytes = summary.total_bytes;
+                                current_summary.accessible_bytes = summary.accessible_bytes;
+                                current_summary.total_files = summary.total_files;
+                                current_summary.total_dirs = summary.total_dirs;
+                                current_summary.inaccessible_files = summary.inaccessible_files;
+                                current_summary.largest_files = summary.largest_files.clone();
+                                current_summary.largest_subdirs = summary.largest_subdirs.clone();
+                                current_summary.extensions = summary.extensions.clone();
+                                current_summary.duration_ms = summary.duration_ms;
+                            } else {
+                                self.explorer_state.scan_summary = Some(summary.clone());
+                            }
+
                             if let Some(sel) = &mut self.explorer_state.selected_node {
-                                if sel.path == root_tree.path {
-                                    *sel = root_tree.clone();
+                                if sel.path == summary.root_path {
+                                    sel.merge_preserving_expansions(summary_root);
+                                    sel.is_deeper_scanned = true;
+                                    sel.is_scanning = false;
                                 }
                             } else {
-                                self.explorer_state.selected_node = Some(root_tree.clone());
+                                self.explorer_state.selected_node = Some(summary_root.clone());
                             }
                         }
-                        self.explorer_state.scan_summary = Some(summary);
                     }
                     Err(err) => {
                         self.logs.push(LogEntry {

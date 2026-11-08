@@ -30,6 +30,7 @@ pub struct ExplorerViewState {
     pub is_scanning: bool,
     pub scan_summary: Option<DirScanSummary>,
     pub expanded_paths: HashSet<PathBuf>,
+    pub scanned_paths: HashSet<PathBuf>,
     pub selected_node: Option<FolderTreeNode>,
     pub search_query: String,
     pub min_size_filter: u64,
@@ -58,6 +59,7 @@ impl Default for ExplorerViewState {
             is_scanning: false,
             scan_summary: None,
             expanded_paths: HashSet::new(),
+            scanned_paths: HashSet::new(),
             selected_node: None,
             search_query: String::new(),
             min_size_filter: 0,
@@ -86,6 +88,7 @@ pub fn render_explorer_view(
     // 0. Process completed background node expansions without ever blocking the UI
     while let Ok(res) = state.node_expand_rx.try_recv() {
         state.pending_expansions.remove(&res.path);
+        state.scanned_paths.insert(res.path.clone());
         if let Some(summary) = &mut state.scan_summary {
             if let Some(root_node) = &mut summary.root_tree {
                 update_tree_node_recursive(root_node, &res);
@@ -339,6 +342,7 @@ fn render_top_left_folder_tree(ui: &mut Ui, state: &mut ExplorerViewState) {
                     let mut node_to_select = None;
 
                     let scroll_max_h = (ui.available_height() - 4.0).max(60.0);
+                    let root_path_str = state.selected_path.clone();
                     ScrollArea::vertical()
                         .id_salt("folder_tree_scroll_panel")
                         .auto_shrink([false, false])
@@ -350,7 +354,9 @@ fn render_top_left_folder_tree(ui: &mut Ui, state: &mut ExplorerViewState) {
                                 root_node,
                                 unit,
                                 0,
+                                &root_path_str,
                                 &mut state.expanded_paths,
+                                &mut state.scanned_paths,
                                 &mut state.pending_expansions,
                                 &state.node_expand_tx,
                                 &mut node_to_select,
@@ -358,6 +364,12 @@ fn render_top_left_folder_tree(ui: &mut Ui, state: &mut ExplorerViewState) {
                         });
 
                     if let Some(mut node) = node_to_select {
+                        // Look up latest scanned version in canonical tree to avoid stale data
+                        if let Some(root) = &summary.root_tree {
+                            if let Some(freshest) = find_node_in_tree(root, &node.path) {
+                                node = freshest.clone();
+                            }
+                        }
                         if node.direct_files.is_empty() && node.immediate_files_size > 0 {
                             node.direct_files = crate::core::analyzer::load_directory_files(&node.path);
                         }
@@ -378,7 +390,9 @@ fn render_tree_recursive_row(
     node: &mut FolderTreeNode,
     unit: SizeUnit,
     depth: usize,
+    root_path_str: &str,
     expanded_paths: &mut HashSet<PathBuf>,
+    scanned_paths: &mut HashSet<PathBuf>,
     pending_expansions: &mut HashSet<PathBuf>,
     node_expand_tx: &Sender<NodeScanResult>,
     node_to_select: &mut Option<FolderTreeNode>,
@@ -386,6 +400,8 @@ fn render_tree_recursive_row(
     let is_expanded = expanded_paths.contains(&node.path);
     let is_pending = pending_expansions.contains(&node.path);
     let can_expand = node.dir_count > 0 || !node.children.is_empty();
+    let is_root = depth == 0 || node.path == PathBuf::from(root_path_str);
+    let is_already_scanned = is_root || node.is_deeper_scanned || scanned_paths.contains(&node.path);
 
     ui.horizontal(|ui| {
         if depth > 0 {
@@ -400,8 +416,8 @@ fn render_tree_recursive_row(
                     expanded_paths.remove(&node.path);
                 } else {
                     expanded_paths.insert(node.path.clone());
-                    // Asynchronously trigger deeper scan on background worker so GUI never freezes!
-                    if !node.is_deeper_scanned && !is_pending {
+                    // Asynchronously trigger deeper scan on background worker only if not already scanned or pending
+                    if !is_already_scanned && !is_pending {
                         pending_expansions.insert(node.path.clone());
                         let tx = node_expand_tx.clone();
                         let path = node.path.clone();
@@ -424,7 +440,7 @@ fn render_tree_recursive_row(
         );
         if label.clicked() {
             *node_to_select = Some(node.clone());
-            if !node.is_deeper_scanned && !is_pending {
+            if !is_already_scanned && !is_pending {
                 pending_expansions.insert(node.path.clone());
                 let tx = node_expand_tx.clone();
                 let path = node.path.clone();
@@ -494,7 +510,9 @@ fn render_tree_recursive_row(
                     child,
                     unit,
                     depth + 1,
+                    root_path_str,
                     expanded_paths,
+                    scanned_paths,
                     pending_expansions,
                     node_expand_tx,
                     node_to_select,

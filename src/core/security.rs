@@ -322,3 +322,88 @@ pub fn grant_administrators_acl(path: &Path) -> Result<(), String> {
         Err(format!("icacls failed (code {:?}): {}", output.status.code(), msg))
     }
 }
+
+/// Returns true if the application is running inside a Windows Remote Desktop (RDP) session.
+pub fn is_rdp_session() -> bool {
+    #[cfg(windows)]
+    {
+        use windows::Win32::UI::WindowsAndMessaging::{GetSystemMetrics, SM_REMOTESESSION};
+        unsafe { GetSystemMetrics(SM_REMOTESESSION) != 0 }
+    }
+    #[cfg(not(windows))]
+    {
+        false
+    }
+}
+
+/// Enables hardware graphics acceleration for Windows Remote Desktop sessions
+/// by writing `bUseHWGraphics = 1` and `bEnumerateHWUsingDirectX = 1`
+/// to `HKLM\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services`.
+pub fn enable_rdp_hardware_acceleration() -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        use windows::core::PCWSTR;
+        use windows::Win32::System::Registry::{
+            RegCreateKeyExW, RegSetValueExW, HKEY_LOCAL_MACHINE, KEY_SET_VALUE, REG_DWORD,
+            REG_OPTION_NON_VOLATILE,
+        };
+
+        let subkey: Vec<u16> = std::ffi::OsStr::new(r"SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services")
+            .encode_wide()
+            .chain(Some(0))
+            .collect();
+        let val1_name: Vec<u16> = std::ffi::OsStr::new("bUseHWGraphics").encode_wide().chain(Some(0)).collect();
+        let val2_name: Vec<u16> = std::ffi::OsStr::new("bEnumerateHWUsingDirectX").encode_wide().chain(Some(0)).collect();
+
+        unsafe {
+            let mut hkey = windows::Win32::System::Registry::HKEY::default();
+
+            let status = RegCreateKeyExW(
+                HKEY_LOCAL_MACHINE,
+                PCWSTR(subkey.as_ptr()),
+                0,
+                PCWSTR::null(),
+                REG_OPTION_NON_VOLATILE,
+                KEY_SET_VALUE,
+                None,
+                &mut hkey,
+                None,
+            );
+
+            if status.is_err() {
+                return Err(format!("Failed to open Terminal Services registry key (must run as Administrator): {:?}", status));
+            }
+
+            let val: u32 = 1;
+            let val_bytes = val.to_ne_bytes();
+
+            let res1 = RegSetValueExW(
+                hkey,
+                PCWSTR(val1_name.as_ptr()),
+                0,
+                REG_DWORD,
+                Some(&val_bytes),
+            );
+            let res2 = RegSetValueExW(
+                hkey,
+                PCWSTR(val2_name.as_ptr()),
+                0,
+                REG_DWORD,
+                Some(&val_bytes),
+            );
+
+            let _ = windows::Win32::System::Registry::RegCloseKey(hkey);
+
+            if res1.is_ok() && res2.is_ok() {
+                Ok(())
+            } else {
+                Err("Failed to set registry DWORD values for RDP hardware acceleration.".to_string())
+            }
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        Ok(())
+    }
+}

@@ -201,3 +201,40 @@ fn test_scanner_real_time_progress_pipeline() {
 
     let _ = fs::remove_dir_all(&temp_root);
 }
+
+
+#[test]
+fn test_merge_preserving_expansions_prevents_race_condition() {
+    use std::path::PathBuf;
+    use win_folder_cleaner::core::types::FolderTreeNode;
+
+    let mut root = FolderTreeNode::new(PathBuf::from("C:\\root"), "root".to_string());
+    let mut child = FolderTreeNode::new(PathBuf::from("C:\\root\\child"), "child".to_string());
+
+    // Simulate user expanding child into deeper levels
+    let grand_child = FolderTreeNode::new(PathBuf::from("C:\\root\\child\\grand"), "grand".to_string());
+    child.children.push(grand_child);
+    child.is_deeper_scanned = true;
+    child.total_size = 5000;
+    root.children.push(child);
+    root.total_size = 5000;
+
+    // Incoming partial progress update from main scanner (which has not deep scanned child)
+    let mut incoming_root = FolderTreeNode::new(PathBuf::from("C:\\root"), "root".to_string());
+    let mut unexpanded_child = FolderTreeNode::new(PathBuf::from("C:\\root\\child"), "child".to_string());
+    unexpanded_child.total_size = 6000; // updated byte total
+    unexpanded_child.is_deeper_scanned = false; // main scanner has not deep scanned this child
+    incoming_root.children.push(unexpanded_child);
+    incoming_root.total_size = 6000;
+
+    // Merge incoming into root
+    root.merge_preserving_expansions(&incoming_root);
+
+    // Assert: child's deeper scanned flag and children MUST be preserved!
+    assert_eq!(root.total_size, 6000);
+    assert_eq!(root.children.len(), 1);
+    let merged_child = &root.children[0];
+    assert!(merged_child.is_deeper_scanned, "Deeper scanned flag must NOT be wiped out by progress ticks");
+    assert_eq!(merged_child.children.len(), 1, "Expanded children must be strictly preserved");
+    assert_eq!(merged_child.children[0].name, "grand");
+}

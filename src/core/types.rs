@@ -161,6 +161,43 @@ impl FolderTreeNode {
     pub fn formatted_immediate_size_with_unit(&self, unit: SizeUnit) -> String {
         unit.format(self.immediate_files_size)
     }
+
+    /// Recursively merges incoming progress data into the existing tree node
+    /// without destroying or resetting already deeper-scanned subtrees.
+    pub fn merge_preserving_expansions(&mut self, incoming: &FolderTreeNode) {
+        self.total_size = incoming.total_size;
+        self.immediate_files_size = incoming.immediate_files_size;
+        self.file_count = incoming.file_count;
+        self.dir_count = incoming.dir_count;
+        self.inaccessible_count = incoming.inaccessible_count;
+        self.is_inaccessible = incoming.is_inaccessible;
+        self.is_scanning = incoming.is_scanning;
+
+        // If direct files were not populated yet, adopt them
+        if self.direct_files.is_empty() && !incoming.direct_files.is_empty() {
+            self.direct_files = incoming.direct_files.clone();
+        }
+
+        // Merge children by path
+        for inc_child in &incoming.children {
+            if let Some(existing_child) = self.children.iter_mut().find(|c| c.path == inc_child.path) {
+                if existing_child.is_deeper_scanned {
+                    // Retain deeper-scanned child structure and files, only updating size/counts
+                    existing_child.total_size = inc_child.total_size;
+                    existing_child.file_count = inc_child.file_count;
+                    existing_child.dir_count = inc_child.dir_count;
+                    existing_child.inaccessible_count = inc_child.inaccessible_count;
+                    existing_child.is_inaccessible = inc_child.is_inaccessible;
+                } else {
+                    existing_child.merge_preserving_expansions(inc_child);
+                }
+            } else {
+                self.children.push(inc_child.clone());
+            }
+        }
+
+        self.children.sort_by(|a, b| b.total_size.cmp(&a.total_size));
+    }
 }
 
 /// Directory item summary with immediate and recursive subtree sizes

@@ -14,7 +14,7 @@ name = "win-folder-cleaner"
 path = "src/main.rs"
 
 [dependencies]
-eframe = { version = "0.29", default-features = false, features = ["wgpu", "default_fonts", "accesskit"] }
+eframe = { version = "0.29", default-features = false, features = ["wgpu", "glow", "default_fonts", "accesskit"] }
 egui = "0.29"
 egui_extras = "0.29"
 crossbeam-channel = "0.5"

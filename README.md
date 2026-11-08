@@ -49,10 +49,11 @@ Built with **`egui` / `eframe`** powered by **`wgpu` (DirectX 12 / DirectX 11 / 
    - Does not traverse symlinks or directory junctions by default.
    - Non-blocking background worker with cancellation support and real-time throttled UI updates.
 
-3. **Subsystem & Console Window Suppression with Zero-Silent-Crash Guarantee**:
-   - Configured with `#![windows_subsystem = "windows"]` in `src/main.rs`.
-   - Configures the PE binary header to `IMAGE_SUBSYSTEM_WINDOWS_GUI`, completely eliminating the companion terminal/console window on startup.
-   - **Native Win32 Error Modal**: Uses native `MessageBoxW` and global panic hooks so that any initialization or runtime failures immediately present clear diagnostic guidance rather than silently terminating.
+3. **Universal Graphics Support & Remote Desktop (RDP) Integration**:
+   - **Automatic Dual-Engine Graphics Fallback**: Boots using `wgpu` (`DirectX 12` + software fallback), and automatically cascades to `glow` (`OpenGL`) if adapter instantiation encounters an unaccelerated GPU.
+   - **Remote Desktop Services (RDP) CLI Tool**: Standard Windows RDP disables hardware acceleration by default. Run `win-folder-cleaner.exe --fix-rdp` as Administrator to automatically enable `bUseHWGraphics` and `bEnumerateHWUsingDirectX` in the Windows Registry.
+   - **Configured with `#![windows_subsystem = "windows"]`**: Eliminates companion terminal window on launch.
+   - **Zero-Silent-Crash Guarantee**: Implements native Win32 `MessageBoxW` and global panic hooks so that any initialization errors or driver conflicts present clear diagnostic instructions rather than silently terminating.
    - **Crash Diagnostics**: Automatically records any panic or startup error trace to `%TEMP%\win_folder_cleaner_crash.log`.
    - **Static C Runtime (`+crt-static`)**: Built with static MSVC CRT linking, guaranteeing the binary runs out of the box without requiring Visual C++ Redistributable DLLs (`vcruntime140.dll` / `msvcp140.dll`).
 

@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.5] - 2026-11-08
+
+### Fixed
+- **Race Condition & Rescanning on Navigation**:
+  - **Tree Merge Preserving Expansions**: Implemented `merge_preserving_expansions` on `FolderTreeNode`. High-frequency progress updates (20 Hz) now update total bytes and file counts without blowing away already deeper-scanned subtrees.
+  - **Root Scan Re-trigger Guard**: Ensured that clicking or expanding the root directory while a scan is in progress or completed never triggers duplicate `scan_node_deep_headless` workers on the root folder.
+  - **Global `scanned_paths` Cache**: Tracks all scanned paths in `ExplorerViewState` so going back and forth between a subfolder and top will never rescan already analyzed subtrees.
+  - **Canonical Tree Lookups**: Breadcrumb and tree selection now pull the freshest node directly from `summary.root_tree`, eliminating stale subfolder snapshots.
+- **Remote Desktop (RDP) & Graphics Adapter Resolution**:
+  - **Automatic Dual-Engine Fallback**: Enabled both `wgpu` and `glow` in `eframe`. The startup sequence attempts `Wgpu` with all backends and low-power/software fallback (`WGPU_POWER_PREF=none`), and automatically falls back to `Glow` if WGPU adapter creation fails.
+  - **Automated `--fix-rdp` Registry Configuration**: Implemented `enable_rdp_hardware_acceleration` in `src/core/security.rs` and CLI argument `--fix-rdp` to configure `bUseHWGraphics = 1` and `bEnumerateHWUsingDirectX = 1` under `HKLM\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services`.
+  - **RDP-Aware Startup Dialog**: If all renderers fail while running inside an RDP session (`is_rdp_session() == true`), presents a clear, actionable guide instructing how to run `win-folder-cleaner.exe --fix-rdp` or enable the Remote Desktop Group Policy.
+
 ## [0.9.4] - 2026-11-08
 
 ### Added

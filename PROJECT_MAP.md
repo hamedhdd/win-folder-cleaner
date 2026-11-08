@@ -98,6 +98,8 @@ flowchart TD
 | `reveal_in_explorer` | `core::shell` | Any | Spawns `explorer.exe /select,"<path>"` highlighting item in Windows Explorer. |
 | `open_with_default_app` | `core::shell` | Any | Invokes `ShellExecuteExW` with verb `open` launching registered default handler. |
 | `show_file_properties` | `core::shell` | Any | Invokes `ShellExecuteExW` with `SEE_MASK_INVOKEIDLIST` and verb `properties` opening native property sheet. |
+| `is_rdp_session` | `core::security` | Any | Detects whether running inside a Remote Desktop session using Win32 `GetSystemMetrics(SM_REMOTESESSION)`. |
+| `enable_rdp_hardware_acceleration` | `core::security` | Elevated Admin | Configures `bUseHWGraphics` and `bEnumerateHWUsingDirectX` under `HKLM\...\Terminal Services` for full remote GPU acceleration. |
 
 ---
 
