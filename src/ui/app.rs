@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread;
 use crossbeam_channel::{unbounded, Receiver};
-use eframe::egui::{self, Color32, Frame, Margin, RichText, Stroke, TopBottomPanel};
+use eframe::egui::{self, Frame, Margin, RichText, Stroke, TopBottomPanel};
 
 use crate::core::analyzer::scan_directory_tree;
 use crate::core::cleaner::{clean_directory_contents, CleanExecutionConfig, DeletionReport};
@@ -364,23 +364,23 @@ impl eframe::App for WinFolderCleanerApp {
                 Frame::none()
                     .fill(ThemeColors::BG_CARD)
                     .stroke(Stroke::new(1.0, ThemeColors::BORDER_QUIET))
-                    .inner_margin(Margin::symmetric(10.0, 3.0)),
+                    .inner_margin(Margin::symmetric(12.0, 4.0)),
             )
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
                     egui::menu::bar(ui, |ui| {
                         ui.menu_button("File", |ui| {
-                            if ui.button("Browse Folder to Scan...").clicked() {
+                            if ui.button("Browse folder to scan...").clicked() {
                                 menu_browse_scan = true;
                                 ui.close_menu();
                             }
-                            if ui.button("Refresh Drives").clicked() {
+                            if ui.button("Refresh drives").clicked() {
                                 self.explorer_state.available_drives = crate::core::security::get_all_drives_space_info();
                                 ui.close_menu();
                             }
                             ui.separator();
                             if !self.is_admin {
-                                if ui.button("Relaunch as Administrator").clicked() {
+                                if ui.button("Relaunch as administrator").clicked() {
                                     let _ = relaunch_as_admin();
                                     ui.close_menu();
                                 }
@@ -392,44 +392,44 @@ impl eframe::App for WinFolderCleanerApp {
                         });
 
                         ui.menu_button("Scan", |ui| {
-                            if ui.button("Start Scan").clicked() {
+                            if ui.button("Start scan").clicked() {
                                 menu_start_scan = true;
                                 ui.close_menu();
                             }
-                            if ui.button("Stop Scan").clicked() {
+                            if ui.button("Stop scan").clicked() {
                                 menu_stop_scan = true;
                                 ui.close_menu();
                             }
                         });
 
                         ui.menu_button("Clean", |ui| {
-                            if ui.button("Temp Cleaner Suite").clicked() {
+                            if ui.button("Temp cleaner suite").clicked() {
                                 self.active_tab = 2;
                                 ui.close_menu();
                             }
                         });
 
                         ui.menu_button("View", |ui| {
-                            if ui.button("Folder Size Analyzer (Pro)").clicked() {
+                            if ui.button("Folder size analyzer (pro)").clicked() {
                                 self.active_tab = 1;
                                 ui.close_menu();
                             }
-                            if ui.button("Temp Cleaner").clicked() {
+                            if ui.button("Temp cleaner").clicked() {
                                 self.active_tab = 2;
                                 ui.close_menu();
                             }
-                            if ui.button("Operation Log").clicked() {
+                            if ui.button("Operation log").clicked() {
                                 self.active_tab = 3;
                                 ui.close_menu();
                             }
-                            if ui.button("System Dashboard").clicked() {
+                            if ui.button("System dashboard").clicked() {
                                 self.active_tab = 0;
                                 ui.close_menu();
                             }
                         });
 
                         ui.menu_button("Help", |ui| {
-                            if ui.button("About Folder Size Pro").clicked() {
+                            if ui.button("About folder size pro").clicked() {
                                 self.logs.push(LogEntry {
                                     timestamp: chrono::Local::now(),
                                     target_path: "About Dialog".to_string(),
@@ -445,22 +445,22 @@ impl eframe::App for WinFolderCleanerApp {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if self.is_admin {
                             ui.label(
-                                RichText::new("● Elevated (Admin)")
+                                RichText::new("Elevated (admin)")
                                     .color(ThemeColors::STATUS_SUCCESS)
                                     .size(11.0),
                             );
                         } else {
                             if ui
                                 .small_button(
-                                    RichText::new("Relaunch Elevated").color(Color32::WHITE),
+                                    RichText::new("Relaunch as administrator").color(ThemeColors::TEXT_PRIMARY),
                                 )
                                 .clicked()
                             {
                                 let _ = relaunch_as_admin();
                             }
                             ui.label(
-                                RichText::new("● Standard User")
-                                    .color(ThemeColors::STATUS_WARNING)
+                                RichText::new("Standard user")
+                                    .color(ThemeColors::TEXT_MUTED)
                                     .size(11.0),
                             );
                         }
@@ -500,18 +500,18 @@ impl eframe::App for WinFolderCleanerApp {
                         RichText::new("Folder Size Pro")
                             .color(ThemeColors::TEXT_PRIMARY)
                             .strong()
-                            .size(15.0),
+                            .size(14.0),
                     );
 
                     ui.add_space(20.0);
 
-                    if ui.selectable_label(self.active_tab == 1, "Folder Size Analyzer").clicked() {
+                    if ui.selectable_label(self.active_tab == 1, "Folder size analyzer").clicked() {
                         self.active_tab = 1;
                     }
-                    if ui.selectable_label(self.active_tab == 2, "Temp Cleaner").clicked() {
+                    if ui.selectable_label(self.active_tab == 2, "Temp cleaner").clicked() {
                         self.active_tab = 2;
                     }
-                    if ui.selectable_label(self.active_tab == 3, "Operation Log").clicked() {
+                    if ui.selectable_label(self.active_tab == 3, "Operation log").clicked() {
                         self.active_tab = 3;
                     }
                     if ui.selectable_label(self.active_tab == 0, "Dashboard").clicked() {
@@ -520,13 +520,13 @@ impl eframe::App for WinFolderCleanerApp {
                 });
             });
 
-        // 3. Bottom Status Bar (matching screenshot: Idle / Files & Folders / Size / Progress)
+        // 3. Bottom Status Bar (matching screenshot: Ready / Files & Folders / Size / Progress)
         TopBottomPanel::bottom("app_status_bar")
             .frame(
                 Frame::none()
                     .fill(ThemeColors::BG_PANEL)
                     .stroke(Stroke::new(1.0, ThemeColors::BORDER_QUIET))
-                    .inner_margin(Margin::symmetric(14.0, 5.0)),
+                    .inner_margin(Margin::symmetric(16.0, 4.0)),
             )
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
@@ -537,14 +537,14 @@ impl eframe::App for WinFolderCleanerApp {
                                 .size(11.0),
                         );
                     } else {
-                        ui.label(RichText::new("Idle").color(ThemeColors::TEXT_MUTED).size(11.0));
+                        ui.label(RichText::new("Ready").color(ThemeColors::TEXT_MUTED).size(11.0));
                     }
 
                     ui.separator();
 
                     if let Some(summary) = &self.explorer_state.scan_summary {
                         ui.label(
-                            RichText::new(format!("{} Files, {} Folders", summary.total_files, summary.total_dirs))
+                            RichText::new(format!("{} files, {} folders", summary.total_files, summary.total_dirs))
                                 .color(ThemeColors::TEXT_SECONDARY)
                                 .size(11.0),
                         );
@@ -556,7 +556,7 @@ impl eframe::App for WinFolderCleanerApp {
                                 .size(11.0),
                         );
                     } else {
-                        ui.label(RichText::new("0 Files, 0 Folders").color(ThemeColors::TEXT_MUTED).size(11.0));
+                        ui.label(RichText::new("0 files, 0 folders").color(ThemeColors::TEXT_MUTED).size(11.0));
                         ui.separator();
                         ui.label(RichText::new("0 Bytes").color(ThemeColors::TEXT_MUTED).size(11.0));
                     }

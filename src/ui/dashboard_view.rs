@@ -40,12 +40,11 @@ fn render_header_card(ui: &mut Ui, is_admin: bool) {
             ui.horizontal(|ui| {
                 ui.vertical(|ui| {
                     ui.heading(
-                        RichText::new("Windows Folder Analyzer & Advanced Cleaner")
-                            .color(ThemeColors::TEXT_PRIMARY)
-                            .strong(),
+                        RichText::new("Storage diagnostics and cleaner")
+                            .color(ThemeColors::TEXT_PRIMARY),
                     );
                     ui.label(
-                        RichText::new("Administrative storage diagnostics, locked process analysis, and safe filesystem cleanup")
+                        RichText::new("Filesystem analysis, process lock inspection, and administrative cleanup")
                             .color(ThemeColors::TEXT_SECONDARY),
                     );
                 });
@@ -53,26 +52,23 @@ fn render_header_card(ui: &mut Ui, is_admin: bool) {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if is_admin {
                         ui.label(
-                            RichText::new("● Administrator Privileges Active")
-                                .color(ThemeColors::STATUS_SUCCESS)
-                                .strong(),
+                            RichText::new("Administrator")
+                                .color(ThemeColors::STATUS_SUCCESS),
                         );
                     } else {
                         ui.horizontal(|ui| {
                             if ui
                                 .button(
-                                    RichText::new("Relaunch as Administrator")
-                                        .color(Color32::WHITE)
-                                        .strong(),
+                                    RichText::new("Relaunch as administrator")
+                                        .color(ThemeColors::TEXT_PRIMARY),
                                 )
                                 .clicked()
                             {
                                 let _ = relaunch_as_admin();
                             }
                             ui.label(
-                                RichText::new("● Running as Standard User")
-                                    .color(ThemeColors::STATUS_WARNING)
-                                    .strong(),
+                                RichText::new("Standard user")
+                                    .color(ThemeColors::TEXT_MUTED),
                             );
                         });
                     }
@@ -89,7 +85,7 @@ fn render_metrics_grid(ui: &mut Ui, metrics: &DashboardMetrics) {
         .show(ui, |ui| {
             render_stat_card(
                 ui,
-                "Total Scanned Size",
+                "Total scanned size",
                 &format_bytes(metrics.total_scanned_bytes),
                 "Across all analyzed locations",
                 ThemeColors::ACCENT,
@@ -97,7 +93,7 @@ fn render_metrics_grid(ui: &mut Ui, metrics: &DashboardMetrics) {
 
             render_stat_card(
                 ui,
-                "Total Files Analyzed",
+                "Total files",
                 &format!("{}", metrics.total_files),
                 &format!("In {} directories", metrics.total_dirs),
                 ThemeColors::TEXT_PRIMARY,
@@ -105,7 +101,7 @@ fn render_metrics_grid(ui: &mut Ui, metrics: &DashboardMetrics) {
 
             render_stat_card(
                 ui,
-                "Inaccessible / Skipped",
+                "Inaccessible or skipped",
                 &format!("{}", metrics.total_inaccessible),
                 "Access denied or restricted",
                 if metrics.total_inaccessible > 0 {
@@ -117,7 +113,7 @@ fn render_metrics_grid(ui: &mut Ui, metrics: &DashboardMetrics) {
 
             render_stat_card(
                 ui,
-                "Locked by Processes",
+                "Locked by processes",
                 &format!("{}", metrics.total_locked),
                 "Identified via Restart Manager",
                 if metrics.total_locked > 0 {
@@ -145,8 +141,7 @@ fn render_stat_card(ui: &mut Ui, title: &str, value: &str, subtitle: &str, val_c
                 ui.label(
                     RichText::new(value)
                         .color(val_color)
-                        .size(22.0)
-                        .strong(),
+                        .size(20.0),
                 );
                 ui.add_space(4.0);
                 ui.label(RichText::new(subtitle).color(ThemeColors::TEXT_SECONDARY).size(11.0));
@@ -160,25 +155,25 @@ fn render_quick_actions(
     on_quick_scan_system_temp: &mut impl FnMut(),
 ) {
     ui.add_space(4.0);
-    ui.label(RichText::new("Quick Operational Actions").color(ThemeColors::TEXT_PRIMARY).strong());
+    ui.label(RichText::new("Quick actions").color(ThemeColors::TEXT_PRIMARY));
 
     ui.horizontal(|ui| {
         if ui
-            .button(RichText::new("Open Folder Analyzer").strong())
+            .button("Open folder analyzer")
             .clicked()
         {
             on_navigate(1);
         }
 
         if ui
-            .button(RichText::new("Open Temp Cleaner").strong())
+            .button("Open temp cleaner")
             .clicked()
         {
             on_navigate(2);
         }
 
         if ui
-            .button(RichText::new("Scan Windows System Temp").color(ThemeColors::STATUS_INFO).strong())
+            .button("Scan system temp")
             .clicked()
         {
             on_quick_scan_system_temp();
@@ -186,7 +181,7 @@ fn render_quick_actions(
         }
 
         if ui
-            .button(RichText::new("View Operations Audit Log").strong())
+            .button("View operation log")
             .clicked()
         {
             on_navigate(3);

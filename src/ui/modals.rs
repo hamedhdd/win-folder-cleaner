@@ -1,4 +1,4 @@
-use eframe::egui::{self, Color32, RichText, Window};
+use eframe::egui::{self, RichText, Window};
 use std::path::PathBuf;
 use crate::ui::theme::ThemeColors;
 use crate::core::types::{FileInfo, format_bytes};
@@ -43,16 +43,16 @@ pub fn show_delete_confirmation_modal(
     let force = state.force_ownership_and_acl;
     let reboot = state.schedule_reboot_if_locked;
 
-    Window::new("Confirm Deletion Operation")
+    Window::new("Confirm deletion")
         .open(&mut open)
         .collapsible(false)
         .resizable(false)
         .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
         .default_width(480.0)
         .show(ctx, |ui| {
-            ui.spacing_mut().item_spacing = egui::vec2(8.0, 10.0);
+            ui.spacing_mut().item_spacing = egui::vec2(8.0, 8.0);
 
-            ui.heading(RichText::new("Deletion Confirmation").color(ThemeColors::TEXT_PRIMARY).strong());
+            ui.heading(RichText::new("Confirm deletion").color(ThemeColors::TEXT_PRIMARY));
             ui.label(
                 RichText::new(format!(
                     "You are about to delete items from: {}",
@@ -66,32 +66,32 @@ pub fn show_delete_confirmation_modal(
             egui::Grid::new("delete_modal_summary_grid")
                 .spacing([16.0, 6.0])
                 .show(ui, |ui| {
-                    ui.label(RichText::new("Total Items:").color(ThemeColors::TEXT_MUTED));
+                    ui.label(RichText::new("Total items:").color(ThemeColors::TEXT_MUTED));
                     ui.label(RichText::new(format!("{} files, {} folders", state.total_files, state.total_dirs)).color(ThemeColors::TEXT_PRIMARY));
                     ui.end_row();
 
-                    ui.label(RichText::new("Total Size:").color(ThemeColors::TEXT_MUTED));
-                    ui.label(RichText::new(format_bytes(state.total_bytes)).color(ThemeColors::STATUS_INFO).strong());
+                    ui.label(RichText::new("Total size:").color(ThemeColors::TEXT_MUTED));
+                    ui.label(RichText::new(format_bytes(state.total_bytes)).color(ThemeColors::TEXT_PRIMARY).strong());
                     ui.end_row();
                 });
 
             ui.separator();
 
-            ui.label(RichText::new("Execution Options:").color(ThemeColors::TEXT_PRIMARY).strong());
+            ui.label(RichText::new("Execution options").color(ThemeColors::TEXT_PRIMARY));
 
-            let dry_run_label = RichText::new("Dry Run Simulation (Preview actions without deleting)")
+            let dry_run_label = RichText::new("Simulate without deleting (dry run)")
                 .color(if state.is_dry_run { ThemeColors::STATUS_INFO } else { ThemeColors::TEXT_SECONDARY });
             ui.checkbox(&mut state.is_dry_run, dry_run_label);
 
             ui.checkbox(
                 &mut state.force_ownership_and_acl,
-                RichText::new("Force Delete (Clear read-only, acquire ownership & grant admin ACL)")
+                RichText::new("Force delete (strip read-only, take ownership, grant ACL)")
                     .color(ThemeColors::TEXT_SECONDARY),
             );
 
             ui.checkbox(
                 &mut state.schedule_reboot_if_locked,
-                RichText::new("Schedule locked files for deletion on next reboot (MoveFileEx)")
+                RichText::new("Schedule locked files for deletion on reboot (MoveFileEx)")
                     .color(ThemeColors::TEXT_SECONDARY),
             );
 
@@ -116,12 +116,18 @@ pub fn show_delete_confirmation_modal(
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let confirm_text = if state.is_dry_run {
-                        "Run Simulation"
+                        "Run simulation"
                     } else {
-                        "Permanently Delete"
+                        "Permanently delete"
                     };
 
-                    if ui.button(RichText::new(confirm_text).color(Color32::WHITE).strong()).clicked() {
+                    let btn_color = if state.is_dry_run {
+                        ThemeColors::TEXT_PRIMARY
+                    } else {
+                        ThemeColors::STATUS_ERROR
+                    };
+
+                    if ui.button(RichText::new(confirm_text).color(btn_color)).clicked() {
                         execute = true;
                         close_modal = true;
                     }
@@ -154,7 +160,7 @@ pub fn show_locked_file_modal(
     let mut close_modal = false;
     let mut schedule_target: Option<PathBuf> = None;
 
-    Window::new("Locked File Inspector")
+    Window::new("Locked file details")
         .open(&mut open)
         .collapsible(false)
         .resizable(true)
@@ -164,7 +170,7 @@ pub fn show_locked_file_modal(
             ui.spacing_mut().item_spacing = egui::vec2(8.0, 8.0);
 
             if let Some(file) = &state.file_info {
-                ui.heading(RichText::new(&file.name).color(ThemeColors::TEXT_PRIMARY).strong());
+                ui.heading(RichText::new(&file.name).color(ThemeColors::TEXT_PRIMARY));
                 ui.label(RichText::new(file.path.to_string_lossy()).color(ThemeColors::TEXT_MUTED));
 
                 ui.separator();
@@ -179,15 +185,15 @@ pub fn show_locked_file_modal(
                 });
 
                 ui.separator();
-                ui.label(RichText::new("Active Locking Processes (Windows Restart Manager):").color(ThemeColors::TEXT_PRIMARY).strong());
+                ui.label(RichText::new("Active locking processes (Restart Manager):").color(ThemeColors::TEXT_PRIMARY));
 
                 if state.locking_processes.is_empty() {
-                    ui.label(RichText::new("No active process handles identified. The file may be locked by a kernel driver or non-Restart-Manager service.").color(ThemeColors::TEXT_SECONDARY));
+                    ui.label(RichText::new("No active process handles identified. The file may be locked by a driver or non-Restart-Manager service.").color(ThemeColors::TEXT_SECONDARY));
                 } else {
                     for proc in &state.locking_processes {
                         ui.group(|ui| {
                             ui.horizontal(|ui| {
-                                ui.label(RichText::new(&proc.app_name).color(ThemeColors::STATUS_WARNING).strong());
+                                ui.label(RichText::new(&proc.app_name).color(ThemeColors::STATUS_WARNING));
                                 ui.label(RichText::new(format!("(PID: {})", proc.pid)).color(ThemeColors::TEXT_MUTED));
                                 if !proc.service_name.is_empty() {
                                     ui.label(RichText::new(format!("Service: {}", proc.service_name)).color(ThemeColors::TEXT_SECONDARY));
@@ -207,12 +213,12 @@ pub fn show_locked_file_modal(
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if !state.reboot_scheduled {
-                            if ui.button(RichText::new("Schedule Delete on Reboot").color(ThemeColors::STATUS_INFO)).clicked() {
+                            if ui.button(RichText::new("Schedule delete on reboot").color(ThemeColors::TEXT_PRIMARY)).clicked() {
                                 schedule_target = Some(file.path.clone());
                                 state.reboot_scheduled = true;
                             }
                         } else {
-                            ui.label(RichText::new("Scheduled for deletion upon next Windows restart").color(ThemeColors::STATUS_SUCCESS));
+                            ui.label(RichText::new("Scheduled for deletion on next restart").color(ThemeColors::STATUS_SUCCESS));
                         }
                     });
                 });

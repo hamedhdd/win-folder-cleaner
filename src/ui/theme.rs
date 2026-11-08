@@ -7,25 +7,31 @@ use eframe::egui::{
 pub struct ThemeColors;
 
 impl ThemeColors {
-    pub const BG_APP: Color32 = Color32::from_rgb(16, 18, 22);
-    pub const BG_PANEL: Color32 = Color32::from_rgb(22, 25, 31);
-    pub const BG_CARD: Color32 = Color32::from_rgb(28, 32, 40);
-    pub const BG_CARD_HOVER: Color32 = Color32::from_rgb(34, 39, 49);
-    pub const BG_INPUT: Color32 = Color32::from_rgb(20, 23, 29);
+    // 1-Ramp Graphite Neutrals
+    pub const BG_APP: Color32 = Color32::from_rgb(15, 17, 20);
+    pub const BG_PANEL: Color32 = Color32::from_rgb(20, 23, 28);
+    pub const BG_CARD: Color32 = Color32::from_rgb(26, 30, 36);
+    pub const BG_CARD_HOVER: Color32 = Color32::from_rgb(33, 38, 46);
+    pub const BG_INPUT: Color32 = Color32::from_rgb(18, 21, 26);
 
-    pub const BORDER_QUIET: Color32 = Color32::from_rgb(44, 50, 62);
+    // Hairline Borders (6-8% perceived opacity on dark background)
+    pub const BORDER_QUIET: Color32 = Color32::from_rgb(40, 46, 56);
     pub const BORDER_FOCUS: Color32 = Color32::from_rgb(59, 130, 246);
 
+    // Three Strict Text Roles
     pub const TEXT_PRIMARY: Color32 = Color32::from_rgb(240, 243, 246);
-    pub const TEXT_SECONDARY: Color32 = Color32::from_rgb(154, 163, 178);
-    pub const TEXT_MUTED: Color32 = Color32::from_rgb(100, 110, 126);
+    pub const TEXT_SECONDARY: Color32 = Color32::from_rgb(156, 163, 175);
+    pub const TEXT_MUTED: Color32 = Color32::from_rgb(107, 114, 128);
 
-    pub const ACCENT: Color32 = Color32::from_rgb(59, 130, 246);       // Azure / Cobalt
+    // One Intentional Accent
+    pub const ACCENT: Color32 = Color32::from_rgb(59, 130, 246);       // Cobalt Azure
     pub const ACCENT_HOVER: Color32 = Color32::from_rgb(96, 165, 250);
+
+    // Toned-Down Semantic Colors (Carrying Meaning Only)
     pub const STATUS_SUCCESS: Color32 = Color32::from_rgb(34, 197, 94);  // Green
-    pub const STATUS_WARNING: Color32 = Color32::from_rgb(245, 158, 11); // Amber
+    pub const STATUS_WARNING: Color32 = Color32::from_rgb(234, 179, 8);  // Amber
     pub const STATUS_ERROR: Color32 = Color32::from_rgb(239, 68, 68);    // Rose / Red
-    pub const STATUS_INFO: Color32 = Color32::from_rgb(14, 165, 233);    // Cyan
+    pub const STATUS_INFO: Color32 = Color32::from_rgb(56, 189, 248);    // Muted Sky Blue
 }
 
 /// Applies deliberate, clean styling to the egui Context.
@@ -40,38 +46,38 @@ pub fn apply_clean_theme(ctx: &egui::Context) {
     visuals.extreme_bg_color = ThemeColors::BG_INPUT;
     visuals.faint_bg_color = ThemeColors::BG_APP;
 
-    // Window & Card Rounding
+    // Nested Radii: Window (8px) -> Card (6px) -> Control (4px)
     visuals.window_rounding = Rounding::same(8.0);
-    visuals.menu_rounding = Rounding::same(6.0);
+    visuals.menu_rounding = Rounding::same(4.0);
     visuals.window_stroke = Stroke::new(1.0, ThemeColors::BORDER_QUIET);
 
-    // Widget states
+    // Widget states with calm chrome
     visuals.widgets.noninteractive.bg_fill = ThemeColors::BG_CARD;
     visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0, ThemeColors::BORDER_QUIET);
     visuals.widgets.noninteractive.fg_stroke = Stroke::new(1.0, ThemeColors::TEXT_SECONDARY);
-    visuals.widgets.noninteractive.rounding = Rounding::same(6.0);
+    visuals.widgets.noninteractive.rounding = Rounding::same(4.0);
 
     visuals.widgets.inactive.bg_fill = ThemeColors::BG_CARD;
     visuals.widgets.inactive.bg_stroke = Stroke::new(1.0, ThemeColors::BORDER_QUIET);
     visuals.widgets.inactive.fg_stroke = Stroke::new(1.0, ThemeColors::TEXT_PRIMARY);
-    visuals.widgets.inactive.rounding = Rounding::same(6.0);
+    visuals.widgets.inactive.rounding = Rounding::same(4.0);
 
     visuals.widgets.hovered.bg_fill = ThemeColors::BG_CARD_HOVER;
     visuals.widgets.hovered.bg_stroke = Stroke::new(1.0, ThemeColors::ACCENT);
     visuals.widgets.hovered.fg_stroke = Stroke::new(1.0, ThemeColors::TEXT_PRIMARY);
-    visuals.widgets.hovered.rounding = Rounding::same(6.0);
+    visuals.widgets.hovered.rounding = Rounding::same(4.0);
 
     visuals.widgets.active.bg_fill = ThemeColors::ACCENT;
     visuals.widgets.active.bg_stroke = Stroke::new(1.0, ThemeColors::ACCENT_HOVER);
-    visuals.widgets.active.fg_stroke = Stroke::new(1.0, Color32::WHITE);
-    visuals.widgets.active.rounding = Rounding::same(6.0);
+    visuals.widgets.active.fg_stroke = Stroke::new(1.0, ThemeColors::TEXT_PRIMARY);
+    visuals.widgets.active.rounding = Rounding::same(4.0);
 
     visuals.widgets.open.bg_fill = ThemeColors::BG_CARD_HOVER;
     visuals.widgets.open.bg_stroke = Stroke::new(1.0, ThemeColors::BORDER_FOCUS);
 
     ctx.set_visuals(visuals);
 
-    // Spacing configuration on 4px/8px rhythm
+    // Spacing configuration strictly on 4px grid
     let mut style = (*ctx.style()).clone();
     style.spacing.item_spacing = Vec2::new(8.0, 8.0);
     style.spacing.button_padding = Vec2::new(12.0, 6.0);

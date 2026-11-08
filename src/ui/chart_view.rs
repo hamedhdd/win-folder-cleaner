@@ -18,18 +18,19 @@ pub struct ChartItem {
     pub color: Color32,
 }
 
-/// Palette of clean, distinct colors for pie chart slices (matching professional tool aesthetics)
+/// Cohesive slate and cool graphite instrument palette with one intentional cobalt accent.
+/// The largest driver carries the accent, while secondary slices sit in calm, balanced slate tiers.
 const PALETTE: [Color32; 10] = [
-    Color32::from_rgb(59, 130, 246),  // Azure Blue
-    Color32::from_rgb(16, 185, 129),  // Emerald Green
-    Color32::from_rgb(245, 158, 11),  // Amber
-    Color32::from_rgb(239, 68, 68),   // Crimson / Red
-    Color32::from_rgb(168, 85, 247),  // Purple
-    Color32::from_rgb(6, 182, 212),   // Cyan
-    Color32::from_rgb(249, 115, 22),  // Orange
-    Color32::from_rgb(236, 72, 153),  // Pink
-    Color32::from_rgb(132, 204, 22),  // Lime
-    Color32::from_rgb(148, 163, 184), // Slate (Others)
+    Color32::from_rgb(59, 130, 246),  // Primary / Leading slice: Cobalt Azure
+    Color32::from_rgb(148, 163, 184), // Slate 400
+    Color32::from_rgb(100, 116, 139), // Slate 500
+    Color32::from_rgb(71, 85, 105),   // Slate 600
+    Color32::from_rgb(96, 165, 250),  // Light Cobalt Tint
+    Color32::from_rgb(125, 138, 156), // Cool Steel
+    Color32::from_rgb(51, 65, 85),    // Slate 700
+    Color32::from_rgb(160, 174, 192), // Slate 350
+    Color32::from_rgb(74, 85, 104),   // Deep Steel
+    Color32::from_rgb(58, 65, 78),    // Others: Muted Graphite Base
 ];
 
 pub fn render_pro_chart(
@@ -41,20 +42,19 @@ pub fn render_pro_chart(
     ui.vertical(|ui| {
         // Toolbar for chart options
         ui.horizontal(|ui| {
-            ui.label(RichText::new("Visualization:").color(ThemeColors::TEXT_MUTED).strong());
+            ui.label(RichText::new("View:").color(ThemeColors::TEXT_MUTED));
 
-            if ui.selectable_label(*chart_mode == ChartMode::Pie, "Pie Chart").clicked() {
+            if ui.selectable_label(*chart_mode == ChartMode::Pie, "Pie chart").clicked() {
                 *chart_mode = ChartMode::Pie;
             }
-            if ui.selectable_label(*chart_mode == ChartMode::Bar, "Bar Breakdown").clicked() {
+            if ui.selectable_label(*chart_mode == ChartMode::Bar, "Bar breakdown").clicked() {
                 *chart_mode = ChartMode::Bar;
             }
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.label(
                     RichText::new(format!("Total: {}", unit.format(node.total_size)))
-                        .color(ThemeColors::ACCENT)
-                        .strong(),
+                        .color(ThemeColors::TEXT_PRIMARY),
                 );
             });
         });

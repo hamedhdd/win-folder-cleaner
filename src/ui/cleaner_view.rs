@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 use eframe::egui::{
-    self, Color32, ComboBox, Frame, Margin, RichText, Rounding, ScrollArea, Stroke, Ui,
+    self, ComboBox, Frame, Margin, RichText, Rounding, ScrollArea, Stroke, Ui,
 };
 
 use crate::core::types::{AgeFilter, TempLocation};
@@ -32,10 +32,10 @@ pub fn render_cleaner_view(
     on_scan_locations: &mut impl FnMut(Vec<PathBuf>),
     on_take_ownership_selected: &mut impl FnMut(Vec<PathBuf>),
     on_fix_permissions_selected: &mut impl FnMut(Vec<PathBuf>),
-    on_clean_selected: &mut impl FnMut(Vec<PathBuf>, AgeFilter, bool), // (paths, age_filter, is_dry_run)
+    on_clean_selected: &mut impl FnMut(Vec<PathBuf>, AgeFilter, bool),
     on_add_custom_directory: &mut impl FnMut(PathBuf),
 ) {
-    ui.spacing_mut().item_spacing = egui::vec2(8.0, 10.0);
+    ui.spacing_mut().item_spacing = egui::vec2(8.0, 8.0);
 
     // Controls & Filter Bar
     render_control_toolbar(
@@ -73,7 +73,7 @@ fn render_control_toolbar(
         .inner_margin(Margin::same(12.0))
         .show(ui, |ui| {
             ui.horizontal(|ui| {
-                if ui.button("Select All").clicked() {
+                if ui.button("Select all").clicked() {
                     for loc in &mut state.locations {
                         if loc.exists {
                             loc.selected = true;
@@ -81,14 +81,14 @@ fn render_control_toolbar(
                     }
                 }
 
-                if ui.button("Deselect All").clicked() {
+                if ui.button("Deselect all").clicked() {
                     for loc in &mut state.locations {
                         loc.selected = false;
                     }
                 }
 
                 ui.add_space(8.0);
-                ui.label(RichText::new("Age Filter:").color(ThemeColors::TEXT_MUTED));
+                ui.label(RichText::new("Age filter:").color(ThemeColors::TEXT_MUTED));
 
                 ComboBox::from_id_salt("cleaner_age_filter_combo")
                     .selected_text(state.selected_age_filter.as_str())
@@ -114,9 +114,8 @@ fn render_control_toolbar(
                         .add_enabled(
                             has_selection && !state.is_operating,
                             egui::Button::new(
-                                RichText::new("Clean Eligible Contents")
-                                    .color(Color32::WHITE)
-                                    .strong(),
+                                RichText::new("Clean contents")
+                                    .color(ThemeColors::STATUS_ERROR),
                             ),
                         )
                         .clicked()
@@ -128,9 +127,8 @@ fn render_control_toolbar(
                         .add_enabled(
                             has_selection && !state.is_operating,
                             egui::Button::new(
-                                RichText::new("Dry Run Simulation")
-                                    .color(ThemeColors::STATUS_INFO)
-                                    .strong(),
+                                RichText::new("Simulate (dry run)")
+                                    .color(ThemeColors::TEXT_PRIMARY),
                             ),
                         )
                         .clicked()
@@ -141,7 +139,7 @@ fn render_control_toolbar(
                     if ui
                         .add_enabled(
                             has_selection && !state.is_operating,
-                            egui::Button::new("Fix Permissions"),
+                            egui::Button::new("Fix permissions"),
                         )
                         .clicked()
                     {
@@ -151,7 +149,7 @@ fn render_control_toolbar(
                     if ui
                         .add_enabled(
                             has_selection && !state.is_operating,
-                            egui::Button::new("Take Ownership"),
+                            egui::Button::new("Take ownership"),
                         )
                         .clicked()
                     {
@@ -161,14 +159,14 @@ fn render_control_toolbar(
                     if ui
                         .add_enabled(
                             has_selection && !state.is_operating,
-                            egui::Button::new("Scan Selected"),
+                            egui::Button::new("Scan selected"),
                         )
                         .clicked()
                     {
                         on_scan_locations(selected_paths);
                     }
 
-                    if ui.button("+ Add Folder...").clicked() {
+                    if ui.button("Add folder...").clicked() {
                         if let Some(folder) = rfd::FileDialog::new().pick_folder() {
                             on_add_custom_directory(folder);
                         }

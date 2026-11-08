@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0] - 2026-11-08
+
+### Changed & Unslopped
+- **Instrument-Grade Design System (`unslop` & `impeccable` Standards)**:
+  - **Graphite Neutral Ramp & Quiet Chrome**: Consolidated all surfaces onto a single tinted graphite neutral ramp (`#0f1114`, `#14171c`, `#1a1e24`, `#21262e`) with quiet hairline borders (`#282e38`) and three distinct text roles (`TEXT_PRIMARY`, `TEXT_SECONDARY`, `TEXT_MUTED`).
+  - **Eliminated Rainbow Circus Palette**: Replaced the 10-hue saturated chart palette with a calibrated cobalt-and-slate instrument scale where the leading storage consumer holds the accent (`#3b82f6`) and secondary slices sit in balanced slate tiers.
+  - **Zero Decorative Emojis**: Replaced the `⚠️` emoji in folder tree rows with quiet, aligned text indicators (`[skipped]`) and eliminated decorative bullet glyphs (`●`) in favor of calm status text.
+  - **Sentence-Case Typography & Bolding Restraint**: Converted navigation tabs, action buttons, dialogs, and table headers to sentence case; removed heavy bolding on secondary labels and descriptions.
+  - **Strict 4px Grid Rhythm**: Corrected all off-grid paddings and margins (e.g., 3px, 5px, 10px) to strict multiples of 4 (4px, 8px, 12px, 16px).
+  - **Nested Radius Hierarchy**: Enforced nested radius math ($\text{window} = 8\text{px} \rightarrow \text{card} = 6\text{px} \rightarrow \text{control} = 4\text{px}$).
+  - **Specific, Quiet Copy**: Stripped hype and wordy action labels; buttons now use concise, descriptive verbs ("Clean contents", "Simulate (dry run)", "Add folder...", "Open in Explorer").
+
 ## [0.8.0] - 2026-11-08
 
 ### Added

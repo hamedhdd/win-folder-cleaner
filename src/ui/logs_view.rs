@@ -28,7 +28,7 @@ pub fn render_logs_view(
     state: &mut LogsViewState,
     logs: &mut Vec<LogEntry>,
 ) {
-    ui.spacing_mut().item_spacing = egui::vec2(8.0, 10.0);
+    ui.spacing_mut().item_spacing = egui::vec2(8.0, 8.0);
 
     // Toolbar: Filter, Search, Export buttons
     Frame::none()
@@ -41,22 +41,22 @@ pub fn render_logs_view(
                 ui.label(RichText::new("Filter:").color(ThemeColors::TEXT_MUTED));
 
                 let current_label = match state.status_filter {
-                    None => "All Events",
+                    None => "All events",
                     Some(LogStatus::Success) => "Success",
                     Some(LogStatus::Warning) => "Warning",
                     Some(LogStatus::Error) => "Error",
-                    Some(LogStatus::DryRun) => "Dry Run",
+                    Some(LogStatus::DryRun) => "Dry run",
                     Some(LogStatus::Skipped) => "Skipped",
                 };
 
                 ComboBox::from_id_salt("log_status_filter_combo")
                     .selected_text(current_label)
                     .show_ui(ui, |ui| {
-                        ui.selectable_value(&mut state.status_filter, None, "All Events");
+                        ui.selectable_value(&mut state.status_filter, None, "All events");
                         ui.selectable_value(&mut state.status_filter, Some(LogStatus::Success), "Success");
                         ui.selectable_value(&mut state.status_filter, Some(LogStatus::Warning), "Warning");
                         ui.selectable_value(&mut state.status_filter, Some(LogStatus::Error), "Error");
-                        ui.selectable_value(&mut state.status_filter, Some(LogStatus::DryRun), "Dry Run");
+                        ui.selectable_value(&mut state.status_filter, Some(LogStatus::DryRun), "Dry run");
                         ui.selectable_value(&mut state.status_filter, Some(LogStatus::Skipped), "Skipped");
                     });
 
@@ -68,16 +68,16 @@ pub fn render_logs_view(
                 );
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.button("Clear Log").clicked() {
+                    if ui.button("Clear log").clicked() {
                         logs.clear();
                         state.export_message = None;
                     }
 
-                    if ui.button("Export to TXT").clicked() {
+                    if ui.button("Export TXT").clicked() {
                         export_logs_txt(logs, state);
                     }
 
-                    if ui.button("Export to CSV").clicked() {
+                    if ui.button("Export CSV").clicked() {
                         export_logs_csv(logs, state);
                     }
                 });

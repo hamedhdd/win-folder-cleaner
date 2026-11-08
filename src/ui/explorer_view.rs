@@ -432,13 +432,13 @@ fn render_tree_recursive_row(
 
         // Inaccessible warning indicator if errors were encountered in subtree
         if node.inaccessible_count > 0 || node.is_inaccessible {
-            ui.label(RichText::new("⚠️").color(ThemeColors::STATUS_WARNING))
+            ui.label(RichText::new("[skipped]").color(ThemeColors::STATUS_WARNING).size(10.0))
                 .on_hover_text(format!("{} skipped or inaccessible items in this subtree", node.inaccessible_count));
         }
 
         // Right-aligned Size
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            ui.label(RichText::new(node.formatted_size_with_unit(unit)).color(ThemeColors::ACCENT).strong());
+            ui.label(RichText::new(node.formatted_size_with_unit(unit)).color(ThemeColors::TEXT_PRIMARY));
         });
     });
 
@@ -498,10 +498,10 @@ fn render_top_right_contents_table(
                     ui.label(RichText::new(format!("({})", unit.format(node.total_size))).color(ThemeColors::ACCENT));
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.small_button(RichText::new("Clean Contents").color(ThemeColors::STATUS_ERROR)).clicked() {
+                        if ui.small_button(RichText::new("Clean contents").color(ThemeColors::STATUS_ERROR)).clicked() {
                             on_clean_folder_contents(&node.path);
                         }
-                        if ui.small_button("Open Explorer").clicked() {
+                        if ui.small_button("Open in Explorer").clicked() {
                             let _ = Command::new("explorer.exe").arg(node.path.to_string_lossy().to_string()).spawn();
                         }
                     });
@@ -533,13 +533,13 @@ fn render_top_right_contents_table(
                         .spacing([10.0, 4.0])
                         .min_col_width(60.0)
                         .show(ui, |ui| {
-                            ui.label(RichText::new("Name").strong().color(ThemeColors::TEXT_MUTED));
-                            ui.label(RichText::new("Size").strong().color(ThemeColors::TEXT_MUTED));
-                            ui.label(RichText::new("Percent").strong().color(ThemeColors::TEXT_MUTED));
-                            ui.label(RichText::new("Files").strong().color(ThemeColors::TEXT_MUTED));
-                            ui.label(RichText::new("Folders").strong().color(ThemeColors::TEXT_MUTED));
-                            ui.label(RichText::new("Attributes").strong().color(ThemeColors::TEXT_MUTED));
-                            ui.label(RichText::new("Actions").strong().color(ThemeColors::TEXT_MUTED));
+                            ui.label(RichText::new("Name").color(ThemeColors::TEXT_MUTED));
+                            ui.label(RichText::new("Size").color(ThemeColors::TEXT_MUTED));
+                            ui.label(RichText::new("Share").color(ThemeColors::TEXT_MUTED));
+                            ui.label(RichText::new("Files").color(ThemeColors::TEXT_MUTED));
+                            ui.label(RichText::new("Folders").color(ThemeColors::TEXT_MUTED));
+                            ui.label(RichText::new("Attrs").color(ThemeColors::TEXT_MUTED));
+                            ui.label(RichText::new("Actions").color(ThemeColors::TEXT_MUTED));
                             ui.end_row();
 
                             // Subdirectories rows
@@ -547,11 +547,11 @@ fn render_top_right_contents_table(
                                 let pct = (child.total_size as f32 / total_parent_size as f32) * 100.0;
 
                                 ui.horizontal(|ui| {
-                                    ui.label(RichText::new("[DIR]").color(ThemeColors::STATUS_INFO).size(10.0));
-                                    ui.label(RichText::new(&child.name).strong().color(ThemeColors::TEXT_PRIMARY));
+                                    ui.label(RichText::new("dir").color(ThemeColors::STATUS_INFO).size(10.0));
+                                    ui.label(RichText::new(&child.name).color(ThemeColors::TEXT_PRIMARY));
                                 });
 
-                                ui.label(RichText::new(unit.format(child.total_size)).color(ThemeColors::ACCENT).strong());
+                                ui.label(RichText::new(unit.format(child.total_size)).color(ThemeColors::TEXT_PRIMARY));
 
                                 ui.horizontal(|ui| {
                                     ui.label(RichText::new(format!("{:.1}%", pct)).color(ThemeColors::TEXT_SECONDARY));
@@ -575,7 +575,7 @@ fn render_top_right_contents_table(
                                 let pct = (file.size as f32 / total_parent_size as f32) * 100.0;
 
                                 ui.horizontal(|ui| {
-                                    ui.label(RichText::new("[FILE]").color(ThemeColors::TEXT_MUTED).size(10.0));
+                                    ui.label(RichText::new("file").color(ThemeColors::TEXT_MUTED).size(10.0));
                                     ui.label(RichText::new(&file.name).color(ThemeColors::TEXT_PRIMARY));
                                 });
 
@@ -594,7 +594,7 @@ fn render_top_right_contents_table(
                                     if ui.small_button("Inspect").clicked() {
                                         on_inspect_file(file);
                                     }
-                                    if ui.small_button(RichText::new("Del").color(ThemeColors::STATUS_ERROR)).clicked() {
+                                    if ui.small_button(RichText::new("Delete").color(ThemeColors::STATUS_ERROR)).clicked() {
                                         on_delete_single_file(file);
                                     }
                                 });
