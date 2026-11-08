@@ -19,6 +19,25 @@ use windows::Win32::UI::Shell::{SEE_MASK_DEFAULT, SHELLEXECUTEINFOW, ShellExecut
 #[cfg(windows)]
 use windows::Win32::UI::WindowsAndMessaging::SW_NORMAL;
 
+/// Discovers all available logical drives on the system (e.g. ["C:\\", "D:\\"]).
+pub fn get_available_drives() -> Vec<String> {
+    let mut drives = Vec::new();
+    #[cfg(windows)]
+    unsafe {
+        let mask = windows::Win32::Storage::FileSystem::GetLogicalDrives();
+        for i in 0..26 {
+            if (mask & (1 << i)) != 0 {
+                let letter = (b'A' + i) as char;
+                drives.push(format!("{}:\\", letter));
+            }
+        }
+    }
+    if drives.is_empty() {
+        drives.push("C:\\".to_string());
+    }
+    drives
+}
+
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 /// Checks whether the current process is running with Administrator (elevated) privileges.

@@ -51,6 +51,17 @@ fn test_directory_tree_scanner_accuracy() {
     assert!(exts.contains(&"log".to_string()));
     assert!(exts.contains(&"bin".to_string()));
 
+    // Verify hierarchical FolderTreeNode structure
+    assert!(summary.root_tree.is_some());
+    let root_node = summary.root_tree.unwrap();
+    assert_eq!(root_node.total_size, 1600);
+    assert_eq!(root_node.children.len(), 2);
+    // Children sorted descending by total_size: sub_b (1000 bytes) then sub_a (600 bytes)
+    assert_eq!(root_node.children[0].name, "sub_b");
+    assert_eq!(root_node.children[0].total_size, 1000);
+    assert_eq!(root_node.children[1].name, "sub_a");
+    assert_eq!(root_node.children[1].total_size, 600);
+
     // Clean up
     let _ = fs::remove_dir_all(&temp_root);
 }

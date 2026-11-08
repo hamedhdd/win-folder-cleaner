@@ -105,7 +105,17 @@ flowchart TD
    - `largest_files: Vec<FileInfo>`, `largest_subdirs: Vec<DirEntrySummary>`.
    - `extensions: Vec<ExtensionStat>`, `duration_ms: u128`.
 
-3. **`TempLocation`**:
+3. **`FolderTreeNode`**:
+   - `path: PathBuf` - Normalized directory path.
+   - `name: String` - Folder display name.
+   - `total_size: u64` - Cumulative recursive subtree byte size.
+   - `immediate_files_size: u64` - Sum of direct file sizes inside this directory.
+   - `file_count: usize` - Recursive total files under this node.
+   - `dir_count: usize` - Recursive total subfolders under this node.
+   - `children: Vec<FolderTreeNode>` - Child folders sorted descending by total size.
+   - `direct_files: Vec<FileInfo>` - Immediate files list for folder inspection.
+
+4. **`TempLocation`**:
    - `id: String`, `name: String`, `path: PathBuf`, `description: String`.
    - `is_system: bool`, `exists: bool`, `selected: bool`.
    - `summary: Option<DirScanSummary>`, `locked_files: Vec<FileInfo>`.

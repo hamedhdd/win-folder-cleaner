@@ -8,7 +8,11 @@ Built with **`egui` / `eframe`** and direct **Windows APIs** (`windows` crate), 
 
 ## Key Features
 
-1. **High-Performance Folder Size Analyzer**:
+1. **High-Performance Folder Size Analyzer & Interactive Tree View**:
+   - **Hierarchical Folder Tree View**: Recursively analyzes and models every folder on any selected drive or directory into an interactive, expandable tree hierarchy (`▶` / `▼`).
+   - **Proportional Size Bars**: Visual capacity bar for each directory node showing percentage allocation relative to parent or root.
+   - **Detailed Folder Inspector**: Click any folder in the tree to inspect its immediate files, total subtree size, file counts, and trigger focused analysis or content cleanup.
+   - **Logical Drives Quick Bar**: Automatically detects available Windows drives (`C:\`, `D:\`, etc.) via Win32 `GetLogicalDrives` for instant root switching.
    - Recursive directory traversal calculating total size (Bytes, KB, MB, GB, TB).
    - Counts files, subdirectories, and inaccessible / access-denied entries.
    - Identifies Top 100 largest files and largest subdirectories with cumulative size.

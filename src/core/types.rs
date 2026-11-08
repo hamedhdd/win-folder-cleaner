@@ -34,6 +34,30 @@ impl FileInfo {
     }
 }
 
+/// Hierarchical tree node representing a folder and its subdirectories with cumulative metrics
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FolderTreeNode {
+    pub path: PathBuf,
+    pub name: String,
+    pub total_size: u64,
+    pub immediate_files_size: u64,
+    pub file_count: usize,
+    pub dir_count: usize,
+    pub children: Vec<FolderTreeNode>,
+    pub direct_files: Vec<FileInfo>,
+    pub is_inaccessible: bool,
+}
+
+impl FolderTreeNode {
+    pub fn formatted_size(&self) -> String {
+        format_bytes(self.total_size)
+    }
+
+    pub fn formatted_immediate_size(&self) -> String {
+        format_bytes(self.immediate_files_size)
+    }
+}
+
 /// Directory item summary with immediate and recursive subtree sizes
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DirEntrySummary {
@@ -80,6 +104,7 @@ pub struct DirScanSummary {
     pub largest_files: Vec<FileInfo>,
     pub largest_subdirs: Vec<DirEntrySummary>,
     pub extensions: Vec<ExtensionStat>,
+    pub root_tree: Option<FolderTreeNode>,
     pub scan_timestamp: DateTime<Local>,
     pub duration_ms: u128,
 }

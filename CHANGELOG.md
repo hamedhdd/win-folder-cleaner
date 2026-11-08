@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2026-11-08
+
+### Added
+- **Full Hierarchical Folder Tree View**: Comprehensive interactive tree view enabling deep recursive exploration of all folders across any drive or directory on Windows.
+- **Tree Row Size Visualizations**: Proportional visual capacity bars, item count badges, and formatted cumulative size indicators for every folder node in the hierarchy.
+- **Collapsible / Expandable Tree Controls**: Interactive node expansion (`▶` / `▼`), "Expand All Top Levels", "Collapse All", and live tree filtering.
+- **Folder Node Inspector**: Detailed right-hand inspection drawer displaying direct file listings, subtree size metrics, and one-click actions:
+  - "Analyze from here": Focus recursive analysis directly from the selected folder.
+  - "Open in Windows Explorer": Safe launch of native file explorer for the folder without PowerShell.
+  - "Clean this folder's contents": Direct pipeline trigger to safely clean selected folder contents.
+- **Logical Drive Quick Selector**: Automatic Win32 drive bitmask detection (`GetLogicalDrives`) providing instant drive pills (`C:\`, `D:\`, etc.) for immediate root exploration.
+
 ## [0.1.0] - 2026-11-08
 
 ### Added

@@ -422,6 +422,8 @@ impl eframe::App for WinFolderCleanerApp {
                         let cur_files = self.current_files_count;
                         let cur_bytes = self.current_bytes_count;
 
+                        let mut clean_folder_target = None;
+
                         render_explorer_view(
                             ui,
                             &mut self.explorer_state,
@@ -432,7 +434,22 @@ impl eframe::App for WinFolderCleanerApp {
                             &mut || cancel_scan = true,
                             &mut |file| inspect_target = Some(file.clone()),
                             &mut |file| delete_target = Some(file.clone()),
+                            &mut |folder| clean_folder_target = Some(folder.clone()),
                         );
+
+                        if let Some(folder) = clean_folder_target {
+                            self.delete_modal = DeleteModalState {
+                                is_open: true,
+                                target_name: folder.file_name().unwrap_or_default().to_string_lossy().to_string(),
+                                target_paths: vec![folder.clone()],
+                                total_files: 0,
+                                total_dirs: 0,
+                                total_bytes: 0,
+                                is_dry_run: false,
+                                force_ownership_and_acl: false,
+                                schedule_reboot_if_locked: false,
+                            };
+                        }
 
                         if let Some(path) = start_scan {
                             self.start_explorer_scan(path);

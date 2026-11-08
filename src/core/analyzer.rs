@@ -8,7 +8,7 @@ use chrono::Local;
 use crossbeam_channel::Sender;
 
 use crate::core::types::{
-    DirEntrySummary, DirScanSummary, ExtensionStat, FileInfo, ScanProgress,
+    DirEntrySummary, DirScanSummary, ExtensionStat, FileInfo, FolderTreeNode, ScanProgress,
 };
 
 #[derive(Eq, PartialEq)]
@@ -27,8 +27,17 @@ impl PartialOrd for LargestFileItem {
     }
 }
 
+struct DirNodeData {
+    path: PathBuf,
+    name: String,
+    direct_size: u64,
+    direct_files: Vec<FileInfo>,
+    child_subdirs: Vec<PathBuf>,
+    is_inaccessible: bool,
+}
+
 /// Recursively scans the specified folder, gathering size, file counts, largest files,
-/// subdirectories, extension distributions, and inaccessible statistics.
+/// subdirectories, extension distributions, full hierarchical folder tree, and inaccessible statistics.
 ///
 /// Respects cancellation token and delivers non-blocking progress updates via channel.
 pub fn scan_directory_tree(
@@ -55,6 +64,7 @@ pub fn scan_directory_tree(
 
     let mut ext_map: HashMap<String, (usize, u64)> = HashMap::new();
     let mut direct_subdirs: HashMap<PathBuf, (u64, usize, usize)> = HashMap::new();
+    let mut dir_map: HashMap<PathBuf, DirNodeData> = HashMap::new();
 
     // Enumerate first-level subdirectories to calculate their direct and cumulative sizes
     if let Ok(entries) = fs::read_dir(&root_path) {
@@ -104,10 +114,26 @@ pub fn scan_directory_tree(
             }
         }
 
+        let dir_name = current_dir
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| current_dir.to_string_lossy().to_string());
+
+        let mut node_data = DirNodeData {
+            path: current_dir.clone(),
+            name: dir_name,
+            direct_size: 0,
+            direct_files: Vec::new(),
+            child_subdirs: Vec::new(),
+            is_inaccessible: false,
+        };
+
         let entries = match fs::read_dir(&current_dir) {
             Ok(iter) => iter,
             Err(_) => {
                 inaccessible_files += 1;
+                node_data.is_inaccessible = true;
+                dir_map.insert(current_dir.clone(), node_data);
                 continue;
             }
         };
@@ -144,6 +170,7 @@ pub fn scan_directory_tree(
             if file_type.is_dir() {
                 total_dirs += 1;
                 stack.push(entry_path.clone());
+                node_data.child_subdirs.push(entry_path.clone());
 
                 // Attribute to direct subdirectory if within one
                 for (subdir_path, stats) in direct_subdirs.iter_mut() {
@@ -157,6 +184,7 @@ pub fn scan_directory_tree(
                 let size = metadata.len();
                 total_bytes += size;
                 accessible_bytes += size;
+                node_data.direct_size += size;
 
                 let name = entry.file_name().to_string_lossy().to_string();
                 let ext = entry_path
@@ -181,7 +209,12 @@ pub fn scan_directory_tree(
                     is_inaccessible: false,
                 };
 
-                // Track largest files (top N)
+                // Track immediate files (up to 100 per folder for inspector)
+                if node_data.direct_files.len() < 100 {
+                    node_data.direct_files.push(file_info.clone());
+                }
+
+                // Track largest files across whole scan (top N)
                 if min_heap.len() < MAX_LARGEST_FILES {
                     min_heap.push(LargestFileItem(file_info));
                 } else if let Some(smallest) = min_heap.peek() {
@@ -206,6 +239,8 @@ pub fn scan_directory_tree(
                 }
             }
         }
+
+        dir_map.insert(current_dir.clone(), node_data);
     }
 
     // Finalize largest files list in descending order
@@ -252,6 +287,9 @@ pub fn scan_directory_tree(
         .collect();
     extensions.sort_by(|a, b| b.total_bytes.cmp(&a.total_bytes));
 
+    // Assemble full hierarchical folder tree
+    let root_tree = build_folder_tree(&root_path, &mut dir_map);
+
     let duration_ms = start_time.elapsed().as_millis();
 
     let summary = DirScanSummary {
@@ -265,6 +303,7 @@ pub fn scan_directory_tree(
         largest_files,
         largest_subdirs,
         extensions,
+        root_tree,
         scan_timestamp: Local::now(),
         duration_ms,
     };
@@ -283,4 +322,39 @@ pub fn scan_directory_tree(
     }
 
     Ok(summary)
+}
+
+fn build_folder_tree(
+    current_path: &Path,
+    dir_map: &mut HashMap<PathBuf, DirNodeData>,
+) -> Option<FolderTreeNode> {
+    let data = dir_map.remove(current_path)?;
+    let mut total_size = data.direct_size;
+    let mut file_count = data.direct_files.len();
+    let mut dir_count = data.child_subdirs.len();
+    let mut children = Vec::new();
+
+    for child_path in &data.child_subdirs {
+        if let Some(child_node) = build_folder_tree(child_path, dir_map) {
+            total_size += child_node.total_size;
+            file_count += child_node.file_count;
+            dir_count += child_node.dir_count;
+            children.push(child_node);
+        }
+    }
+
+    // Sort children descending by total_size so heaviest subfolders are prioritized at top
+    children.sort_by(|a, b| b.total_size.cmp(&a.total_size));
+
+    Some(FolderTreeNode {
+        path: data.path,
+        name: data.name,
+        total_size,
+        immediate_files_size: data.direct_size,
+        file_count,
+        dir_count,
+        children,
+        direct_files: data.direct_files,
+        is_inaccessible: data.is_inaccessible,
+    })
 }
