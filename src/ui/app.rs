@@ -12,7 +12,7 @@ use crate::core::restart_mgr::get_locking_processes;
 use crate::core::security::{grant_administrators_acl, is_elevated, relaunch_as_admin, take_ownership};
 use crate::core::temp_dirs::discover_temp_locations;
 use crate::core::types::{
-    AgeFilter, DirScanSummary, LogEntry, LogStatus, ScanProgress, TempLocation,
+    format_bytes, AgeFilter, DirScanSummary, LogEntry, LogStatus, ScanProgress, TempLocation,
 };
 use crate::ui::cleaner_view::{render_cleaner_view, CleanerViewState};
 use crate::ui::dashboard_view::{render_dashboard, DashboardMetrics};
@@ -269,7 +269,11 @@ impl WinFolderCleanerApp {
                         });
                     }
 
-                    if self.explorer_state.selected_node.is_none() {
+                    if let Some(sel) = &mut self.explorer_state.selected_node {
+                        if sel.path == tree.path {
+                            *sel = tree.clone();
+                        }
+                    } else {
                         self.explorer_state.selected_node = Some(tree);
                     }
                 }
@@ -292,6 +296,15 @@ impl WinFolderCleanerApp {
                                 summary.total_files, summary.total_bytes, summary.inaccessible_files, summary.duration_ms
                             ),
                         });
+                        if let Some(root_tree) = &summary.root_tree {
+                            if let Some(sel) = &mut self.explorer_state.selected_node {
+                                if sel.path == root_tree.path {
+                                    *sel = root_tree.clone();
+                                }
+                            } else {
+                                self.explorer_state.selected_node = Some(root_tree.clone());
+                            }
+                        }
                         self.explorer_state.scan_summary = Some(summary);
                     }
                     Err(err) => {
@@ -563,8 +576,9 @@ impl eframe::App for WinFolderCleanerApp {
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if self.explorer_state.is_scanning {
+                            let size_display = format_bytes(self.current_bytes_count);
                             ui.label(
-                                RichText::new(format!("Progress: {} files", self.current_files_count))
+                                RichText::new(format!("Progress: {} files ({})", self.current_files_count, size_display))
                                     .color(ThemeColors::STATUS_INFO)
                                     .size(11.0),
                             );

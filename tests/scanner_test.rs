@@ -145,3 +145,59 @@ fn test_upper_levels_scanned_and_on_demand_deeper_expansion() {
     // Clean up
     let _ = fs::remove_dir_all(&temp_root);
 }
+
+#[test]
+fn test_scanner_real_time_progress_pipeline() {
+    let temp_root = std::env::temp_dir().join("test_win_folder_cleaner_progress");
+    let _ = fs::remove_dir_all(&temp_root);
+    fs::create_dir_all(&temp_root).expect("create test root");
+
+    let sub1 = temp_root.join("sub1");
+    let sub2 = temp_root.join("sub2");
+    fs::create_dir_all(&sub1).expect("create sub1");
+    fs::create_dir_all(&sub2).expect("create sub2");
+
+    for i in 0..10 {
+        let p = sub1.join(format!("file_{}.dat", i));
+        let mut f = File::create(&p).unwrap();
+        f.write_all(&vec![b'X'; 500]).unwrap();
+    }
+    for i in 0..10 {
+        let p = sub2.join(format!("file_{}.dat", i));
+        let mut f = File::create(&p).unwrap();
+        f.write_all(&vec![b'Y'; 1000]).unwrap();
+    }
+
+    let cancel_token = Arc::new(AtomicBool::new(false));
+    let (tx, rx) = crossbeam_channel::unbounded();
+
+    let summary = scan_directory_tree(&temp_root, cancel_token, Some(tx))
+        .expect("scan should succeed");
+
+    assert_eq!(summary.total_files, 20);
+    assert_eq!(summary.total_bytes, 15000);
+
+    // Collect all progress updates delivered during scan
+    let mut received_progress = Vec::new();
+    while let Ok(msg) = rx.try_recv() {
+        received_progress.push(msg);
+    }
+
+    // Must have received at least the initial immediate update and the final completion update
+    assert!(received_progress.len() >= 2);
+
+    // Initial update must arrive immediately with partial_tree containing root node
+    let first = &received_progress[0];
+    assert!(first.partial_tree.is_some());
+    let init_tree = first.partial_tree.as_ref().unwrap();
+    assert_eq!(init_tree.children.len(), 2);
+    assert!(!first.is_completed);
+
+    // Last update must mark completion and have all files and bytes
+    let last = received_progress.last().unwrap();
+    assert!(last.is_completed);
+    assert_eq!(last.files_scanned, 20);
+    assert_eq!(last.bytes_scanned, 15000);
+
+    let _ = fs::remove_dir_all(&temp_root);
+}

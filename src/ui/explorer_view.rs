@@ -10,7 +10,7 @@ use eframe::egui::{
 
 use crate::core::security::get_all_drives_space_info;
 use crate::core::types::{
-    DirScanSummary, DriveSpaceInfo, FileInfo, FolderTreeNode, NodeScanResult, SizeUnit, SortColumn,
+    format_bytes, DirScanSummary, DriveSpaceInfo, FileInfo, FolderTreeNode, NodeScanResult, SizeUnit, SortColumn,
     SortDirection,
 };
 use crate::ui::chart_view::{render_pro_chart, ChartMode};
@@ -266,7 +266,8 @@ fn render_scanning_indicator(
                     if ui.small_button(RichText::new("Stop").color(ThemeColors::STATUS_ERROR)).clicked() {
                         on_cancel_scan();
                     }
-                    ui.label(RichText::new(format!("{} bytes ({} files)", current_bytes_count, current_files_count)).color(ThemeColors::STATUS_INFO).strong());
+                    let size_display = format_bytes(current_bytes_count);
+                    ui.label(RichText::new(format!("{} ({} files)", size_display, current_files_count)).color(ThemeColors::STATUS_INFO).strong());
                 });
             });
         });
