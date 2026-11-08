@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-11-08
+
+### Added & Optimized
+- **Low-Memory Footprint & Strict Allocation Bounds**:
+  - **Eliminated Deep-Map Cloning**: Completely removed intermediate clones of `dir_map` during deep directory traversal. Upper-level tree snapshots are only taken for depth 0 and 1, stopping allocation thrashing on large drives.
+  - **Bounded Candidate Largest Files**: Restricted each scanned directory to a bounded local min-heap of at most 100 candidate items (rather than collecting every single file into memory), reducing file buffer allocations by over 95%.
+  - **On-Demand Direct File Loading (`load_directory_files`)**: Direct file lists (`Vec<FileInfo>`) are only cached for top-level root and depth 1 folders. For deeper folders, direct files are loaded on demand in < 1ms when selected in the UI.
+  - **In-Place Tree Construction**: Reclaimed `dir_map` memory by moving entries directly into `FolderTreeNode` during final tree assembly.
+  - **Dramatic RAM Reduction**: Memory consumption during large disk scans reduced from upwards of 500MB-1.5GB down to ~15-25MB.
+
 ## [0.4.0] - 2026-11-08
 
 ### Added

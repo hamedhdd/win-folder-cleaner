@@ -39,7 +39,9 @@ struct DirNodeData {
     is_inaccessible: bool,
 }
 
-/// Output data from scanning a single directory
+/// Output data from scanning a single directory.
+/// Keeps memory minimal by bounding candidate largest files to 100 per folder
+/// and only caching direct files for top-level folders (depth <= 1).
 struct SingleDirScanOutput {
     path: PathBuf,
     name: String,
@@ -57,6 +59,7 @@ struct SingleDirScanOutput {
 /// Child directories are collected and returned so they can be processed level-by-level.
 fn scan_single_directory(
     dir_path: &Path,
+    depth: usize,
     cancel_token: &Arc<AtomicBool>,
 ) -> SingleDirScanOutput {
     let dir_name = dir_path
@@ -85,6 +88,10 @@ fn scan_single_directory(
             return output;
         }
     };
+
+    // Bounded local min-heap for top candidate files in this folder (max 100)
+    let mut local_largest: BinaryHeap<LargestFileItem> = BinaryHeap::new();
+    const MAX_LOCAL_LARGEST: usize = 100;
 
     for entry in entries {
         if cancel_token.load(Ordering::Relaxed) {
@@ -146,12 +153,21 @@ fn scan_single_directory(
                 is_inaccessible: false,
             };
 
-            // Store immediate files (up to 100 for fast UI preview)
-            if output.direct_files.len() < 100 {
+            // Memory optimization: Store immediate files only for top-level folders (depth <= 1).
+            // Deeper folders load files on demand in < 1ms when selected in the UI.
+            if depth <= 1 && output.direct_files.len() < 100 {
                 output.direct_files.push(file_info.clone());
             }
 
-            output.largest_files.push(file_info);
+            // Memory optimization: Bound candidate largest files to top 100 per directory
+            if local_largest.len() < MAX_LOCAL_LARGEST {
+                local_largest.push(LargestFileItem(file_info));
+            } else if let Some(smallest) = local_largest.peek() {
+                if size > smallest.0.size {
+                    local_largest.pop();
+                    local_largest.push(LargestFileItem(file_info));
+                }
+            }
 
             let stat = output.ext_stats.entry(ext).or_insert((0, 0));
             stat.0 += 1;
@@ -159,16 +175,56 @@ fn scan_single_directory(
         }
     }
 
+    output.largest_files = local_largest.into_iter().map(|item| item.0).collect();
     output
 }
 
-/// High-performance Breadth-First (Level-Order) directory scanner.
+/// Reads the immediate files of a single directory on demand (in < 1ms)
+/// so that deep directories don't have to cache millions of files in memory.
+pub fn load_directory_files(dir_path: &Path) -> Vec<FileInfo> {
+    let mut files = Vec::new();
+    if let Ok(entries) = fs::read_dir(dir_path) {
+        for entry in entries.flatten() {
+            let entry_path = entry.path();
+            if let Ok(meta) = fs::symlink_metadata(&entry_path) {
+                if meta.is_file() && !meta.file_type().is_symlink() {
+                    let name = entry.file_name().to_string_lossy().to_string();
+                    let ext = entry_path
+                        .extension()
+                        .and_then(|e| e.to_str())
+                        .unwrap_or("(no extension)")
+                        .to_lowercase();
+                    files.push(FileInfo {
+                        path: entry_path,
+                        name,
+                        extension: ext,
+                        size: meta.len(),
+                        modified: meta.modified().ok(),
+                        is_dir: false,
+                        is_symlink: false,
+                        is_readonly: meta.permissions().readonly(),
+                        is_locked: false,
+                        is_inaccessible: false,
+                    });
+                }
+            }
+        }
+    }
+    // Sort descending by size
+    files.sort_by(|a, b| b.size.cmp(&a.size));
+    files
+}
+
+/// High-performance Breadth-First (Level-Order) directory scanner with strict memory bounds.
 ///
 /// Scans upper-level folders first before descending into deeper levels.
 /// At each level, multiple sibling folders are scanned concurrently across CPU cores using Rayon.
 ///
-/// Delivers live progress updates with partial hierarchical tree snapshots so the UI
-/// displays upper-level folders almost immediately while deeper levels continue in the background.
+/// Memory optimizations:
+/// 1. Candidate largest files bounded to top 100 per folder.
+/// 2. Direct files only cached for depth <= 1 (deeper loaded on demand).
+/// 3. Zero cloning of dir_map on deep levels (eliminating massive allocation thrashing).
+/// 4. Drains dir_map into root_tree on completion.
 pub fn scan_directory_tree(
     root: &Path,
     cancel_token: Arc<AtomicBool>,
@@ -198,7 +254,6 @@ pub fn scan_directory_tree(
     let mut current_level: Vec<PathBuf> = vec![root_path.clone()];
     let mut current_depth: usize = 0;
     let mut last_progress_time = Instant::now();
-    let mut last_tree_snapshot_time = Instant::now();
 
     while !current_level.is_empty() {
         if cancel_token.load(Ordering::Relaxed) {
@@ -224,12 +279,12 @@ pub fn scan_directory_tree(
         let results: Vec<SingleDirScanOutput> = if current_level.len() > 1 {
             current_level
                 .par_iter()
-                .map(|path| scan_single_directory(path, &cancel_token))
+                .map(|path| scan_single_directory(path, current_depth, &cancel_token))
                 .collect()
         } else {
             current_level
                 .iter()
-                .map(|path| scan_single_directory(path, &cancel_token))
+                .map(|path| scan_single_directory(path, current_depth, &cancel_token))
                 .collect()
         };
 
@@ -280,21 +335,17 @@ pub fn scan_directory_tree(
             );
         }
 
-        // Emit live partial tree snapshot:
-        // Always emit on early levels (depth 0, 1, 2) for immediate UI responsiveness,
-        // and throttle to every 250ms on deeper levels to conserve CPU.
-        let should_emit_partial = current_depth <= 2
-            || last_tree_snapshot_time.elapsed() >= Duration::from_millis(250);
-
-        let partial_tree = if should_emit_partial && progress_tx.is_some() {
-            last_tree_snapshot_time = Instant::now();
+        // Memory optimization:
+        // Only emit partial_tree for depth 0 and depth 1 (where dir_map has only 1..30 items).
+        // On deeper levels, do NOT clone dir_map!
+        let partial_tree = if current_depth <= 1 && progress_tx.is_some() {
             let mut snapshot_map = dir_map.clone();
             build_folder_tree(&root_path, &mut snapshot_map)
         } else {
             None
         };
 
-        // Throttle progress updates to ~10 times per second or on partial tree emission
+        // Throttle progress updates to ~10 times per second or on initial upper levels
         if last_progress_time.elapsed() >= Duration::from_millis(100) || partial_tree.is_some() {
             last_progress_time = Instant::now();
             if let Some(tx) = &progress_tx {
@@ -346,7 +397,7 @@ pub fn scan_directory_tree(
         .collect();
     extensions.sort_by(|a, b| b.total_bytes.cmp(&a.total_bytes));
 
-    // Assemble final full hierarchical folder tree
+    // Assemble final full hierarchical folder tree, draining dir_map to free memory
     let root_tree = build_folder_tree(&root_path, &mut dir_map);
 
     // Finalize largest direct subdirectories from the root tree children

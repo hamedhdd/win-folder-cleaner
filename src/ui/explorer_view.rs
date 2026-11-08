@@ -275,7 +275,10 @@ fn render_top_left_folder_tree(ui: &mut Ui, state: &mut ExplorerViewState) {
                         );
                     });
 
-                    if let Some(node) = node_to_select {
+                    if let Some(mut node) = node_to_select {
+                        if node.direct_files.is_empty() && node.immediate_files_size > 0 {
+                            node.direct_files = crate::core::analyzer::load_directory_files(&node.path);
+                        }
                         state.selected_node = Some(node);
                     }
                 }
@@ -359,7 +362,11 @@ fn render_top_right_contents_table(
         .show(ui, |ui| {
             let unit = state.selected_unit;
 
-            if let Some(node) = &state.selected_node {
+            if let Some(node) = &mut state.selected_node {
+                if node.direct_files.is_empty() && node.immediate_files_size > 0 {
+                    node.direct_files = crate::core::analyzer::load_directory_files(&node.path);
+                }
+
                 // Header with breadcrumb and actions
                 ui.horizontal(|ui| {
                     ui.label(RichText::new(&node.name).strong().color(ThemeColors::TEXT_PRIMARY));
