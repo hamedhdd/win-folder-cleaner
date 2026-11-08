@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-11-08
+
+### Added
+- **Folder Size Professional 4-Quadrant Workspace Layout**: Modeled precisely after Folder Size Pro desktop interface:
+  - **Top Menu Bar**: Classic Windows menu bar with `File`, `Scan`, `Clean`, `View`, and `Help` menus with admin elevation badge and one-click relaunch.
+  - **Top-Left Quadrant**: Hierarchical folder tree view showing folder hierarchy and right-aligned cumulative sizes.
+  - **Top-Right Quadrant**: Detailed contents table with `Name`, `Size`, `Percent` visual progress bar, `Files`, `Folders`, `Attributes` (`D`, `A`, `RA`), and actions.
+  - **Bottom-Left Quadrant**: Logical Drives Overview table reporting `Drive`, `Total Size`, `Used Space`, `Free Space`, and `Usage %` using Win32 `GetDiskFreeSpaceExW`.
+  - **Bottom-Right Quadrant**: Interactive graphical Pie Chart with custom vector rendering, exploded slice on hover along its bisecting angle, pointer callout tooltip (`Name: XX.XX% (XX.XX MB)`), palette colors, legend, and `Pie` / `Bar Breakdown` view toggle.
+  - **Bottom Status Bar**: Displays real-time operational status (`Idle` / `Scanning: ...`), `X Files, Y Folders`, total size, and progress indicator.
+  - **Global Unit Selectors**: Toolbar unit toggles (`B`, `KB`, `MB`, `GB`, `AUTO`) that instantaneously update all size displays across the tree, tables, drives, and charts.
+
+### Fixed & Enhanced
+- **Companion Terminal/Console Window Suppression**: Added `#![windows_subsystem = "windows"]` to `src/main.rs` configuring the PE header subsystem to `IMAGE_SUBSYSTEM_WINDOWS_GUI`, completely eliminating the companion console/terminal window on application startup.
+- **Strict Zero-PowerShell Guarantee**: Verified all operations (elevation, take ownership, ACL grant, logical drive space querying, explorer launch) utilize native Win32 APIs or direct binary execution without PowerShell.
+- **Default Startup View**: Set Folder Size Analyzer (Pro 4-quadrant view) as the primary default tab upon application launch.
+
 ## [0.2.0] - 2026-11-08
 
 ### Added

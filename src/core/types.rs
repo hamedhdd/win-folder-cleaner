@@ -3,6 +3,59 @@ use std::time::SystemTime;
 use chrono::{DateTime, Local};
 use serde::{Deserialize, Serialize};
 
+/// Size unit display mode (B, KB, MB, GB, AUTO) matching pro storage analyzer layout
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SizeUnit {
+    Auto,
+    Bytes,
+    Kilobytes,
+    Megabytes,
+    Gigabytes,
+}
+
+impl SizeUnit {
+    pub fn format(&self, bytes: u64) -> String {
+        match self {
+            SizeUnit::Auto => format_bytes(bytes),
+            SizeUnit::Bytes => format!("{} B", bytes),
+            SizeUnit::Kilobytes => format!("{:.2} KB", bytes as f64 / 1024.0),
+            SizeUnit::Megabytes => format!("{:.2} MB", bytes as f64 / (1024.0 * 1024.0)),
+            SizeUnit::Gigabytes => format!("{:.2} GB", bytes as f64 / (1024.0 * 1024.0 * 1024.0)),
+        }
+    }
+}
+
+/// Volume and drive storage metrics (Drive letter, Total Size, Used, Free)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DriveSpaceInfo {
+    pub letter: String,
+    pub total_bytes: u64,
+    pub used_bytes: u64,
+    pub free_bytes: u64,
+}
+
+impl DriveSpaceInfo {
+    pub fn used_percent(&self) -> f32 {
+        if self.total_bytes > 0 {
+            (self.used_bytes as f32 / self.total_bytes as f32) * 100.0
+        } else {
+            0.0
+        }
+    }
+
+    pub fn formatted_size(&self, unit: SizeUnit) -> String {
+        unit.format(self.total_bytes)
+    }
+
+    pub fn formatted_used(&self, unit: SizeUnit) -> String {
+        unit.format(self.used_bytes)
+    }
+
+    pub fn formatted_free(&self, unit: SizeUnit) -> String {
+        unit.format(self.free_bytes)
+    }
+}
+
 /// Detailed file metadata for sorting, display, and deletion operations
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FileInfo {
@@ -21,6 +74,10 @@ pub struct FileInfo {
 impl FileInfo {
     pub fn formatted_size(&self) -> String {
         format_bytes(self.size)
+    }
+
+    pub fn formatted_size_with_unit(&self, unit: SizeUnit) -> String {
+        unit.format(self.size)
     }
 
     pub fn formatted_modified(&self) -> String {
@@ -53,8 +110,16 @@ impl FolderTreeNode {
         format_bytes(self.total_size)
     }
 
+    pub fn formatted_size_with_unit(&self, unit: SizeUnit) -> String {
+        unit.format(self.total_size)
+    }
+
     pub fn formatted_immediate_size(&self) -> String {
         format_bytes(self.immediate_files_size)
+    }
+
+    pub fn formatted_immediate_size_with_unit(&self, unit: SizeUnit) -> String {
+        unit.format(self.immediate_files_size)
     }
 }
 

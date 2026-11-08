@@ -2,52 +2,48 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 use std::process::Command;
 use eframe::egui::{
-    self, Color32, Frame, Margin, ProgressBar, RichText, Rounding, ScrollArea, Stroke, Ui,
+    self, Color32, ComboBox, Frame, Margin, ProgressBar, RichText, Rounding, ScrollArea, Stroke, Ui, Vec2,
 };
 
-use crate::core::security::get_available_drives;
+use crate::core::security::get_all_drives_space_info;
 use crate::core::types::{
-    DirScanSummary, FileInfo, FolderTreeNode, SortColumn, SortDirection, format_bytes,
+    DirScanSummary, DriveSpaceInfo, FileInfo, FolderTreeNode, SizeUnit, SortColumn, SortDirection,
 };
+use crate::ui::chart_view::{render_pro_chart, ChartMode};
 use crate::ui::theme::ThemeColors;
 
 pub struct ExplorerViewState {
     pub selected_path: String,
-    pub available_drives: Vec<String>,
+    pub available_drives: Vec<DriveSpaceInfo>,
+    pub selected_unit: SizeUnit,
+    pub chart_mode: ChartMode,
     pub is_scanning: bool,
     pub scan_summary: Option<DirScanSummary>,
-    pub search_query: String,
-    pub tree_search_query: String,
-    pub active_tab: ExplorerSubTab,
     pub expanded_paths: HashSet<PathBuf>,
     pub selected_node: Option<FolderTreeNode>,
+    pub search_query: String,
     pub sort_column: SortColumn,
     pub sort_direction: SortDirection,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ExplorerSubTab {
-    FolderTree,
-    LargestFiles,
-    LargestSubdirs,
-    Extensions,
-}
-
 impl Default for ExplorerViewState {
     fn default() -> Self {
-        let drives = get_available_drives();
-        let default_path = drives.first().cloned().unwrap_or_else(|| "C:\\".to_string());
+        let drives = get_all_drives_space_info();
+        let default_path = drives
+            .first()
+            .map(|d| d.letter.clone())
+            .unwrap_or_else(|| "C:\\".to_string());
 
         Self {
             selected_path: default_path,
             available_drives: drives,
+            selected_unit: SizeUnit::Auto,
+            chart_mode: ChartMode::Pie,
             is_scanning: false,
             scan_summary: None,
-            search_query: String::new(),
-            tree_search_query: String::new(),
-            active_tab: ExplorerSubTab::FolderTree,
             expanded_paths: HashSet::new(),
             selected_node: None,
+            search_query: String::new(),
             sort_column: SortColumn::Size,
             sort_direction: SortDirection::Descending,
         }
@@ -66,94 +62,57 @@ pub fn render_explorer_view(
     on_delete_single_file: &mut impl FnMut(&FileInfo),
     on_clean_folder_contents: &mut impl FnMut(&PathBuf),
 ) {
-    ui.spacing_mut().item_spacing = egui::vec2(8.0, 10.0);
+    ui.spacing_mut().item_spacing = Vec2::new(6.0, 6.0);
 
-    // Folder selection & action bar with drive quick-select
-    render_path_selector_bar(ui, state, on_start_scan, on_cancel_scan);
+    // 1. Pro Toolbar with Drive Dropdown, Path textfield, Scan/Stop, and Unit Selectors
+    render_pro_toolbar(ui, state, on_start_scan, on_cancel_scan);
 
-    // Real-time progress bar if scanning is in progress
+    // 2. Real-time scanning indicator banner if active
     if state.is_scanning {
         render_scanning_indicator(ui, current_scan_path, current_files_count, current_bytes_count, on_cancel_scan);
     }
 
-    // Results summary header
-    let summary_opt = state.scan_summary.clone();
-    if let Some(summary) = &summary_opt {
-        render_summary_banner(ui, summary);
+    // 3. Four-Quadrant Main Workspace matching the Folder Size Professional layout
+    let total_avail_height = (ui.available_height() - 24.0).max(350.0);
+    let top_quadrant_height = total_avail_height * 0.54;
+    let bottom_quadrant_height = total_avail_height * 0.46;
 
-        // Subtabs: Folder Tree View | Largest Files | Largest Subdirectories | File Extensions
-        ui.horizontal(|ui| {
-            if ui.selectable_label(state.active_tab == ExplorerSubTab::FolderTree, "Folder Tree View").clicked() {
-                state.active_tab = ExplorerSubTab::FolderTree;
-            }
-            if ui.selectable_label(state.active_tab == ExplorerSubTab::LargestFiles, "Largest Files (Top 100)").clicked() {
-                state.active_tab = ExplorerSubTab::LargestFiles;
-            }
-            if ui.selectable_label(state.active_tab == ExplorerSubTab::LargestSubdirs, "Largest Subdirectories").clicked() {
-                state.active_tab = ExplorerSubTab::LargestSubdirs;
-            }
-            if ui.selectable_label(state.active_tab == ExplorerSubTab::Extensions, "File Extensions Distribution").clicked() {
-                state.active_tab = ExplorerSubTab::Extensions;
-            }
+    // TOP HALF: [Top-Left: Directory Tree] | [Top-Right: Contents Detailed List]
+    ui.allocate_ui(Vec2::new(ui.available_width(), top_quadrant_height), |ui| {
+        ui.columns(2, |cols| {
+            // Top-Left: Directory Tree View (Folder | Size)
+            render_top_left_folder_tree(&mut cols[0], state);
 
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if state.active_tab == ExplorerSubTab::FolderTree {
-                    ui.add(
-                        egui::TextEdit::singleline(&mut state.tree_search_query)
-                            .hint_text("Filter folders in tree...")
-                            .desired_width(200.0),
-                    );
-                } else {
-                    ui.add(
-                        egui::TextEdit::singleline(&mut state.search_query)
-                            .hint_text("Filter by name or extension...")
-                            .desired_width(200.0),
-                    );
-                }
-            });
+            // Top-Right: Detailed Contents Table (Name | Size | % | Files | Folders | Date | Actions)
+            render_top_right_contents_table(
+                &mut cols[1],
+                state,
+                on_inspect_file,
+                on_delete_single_file,
+                on_clean_folder_contents,
+            );
         });
+    });
 
-        ui.separator();
+    ui.separator();
 
-        match state.active_tab {
-            ExplorerSubTab::FolderTree => {
-                render_folder_tree_subtab(
-                    ui,
-                    state,
-                    summary,
-                    on_start_scan,
-                    on_inspect_file,
-                    on_delete_single_file,
-                    on_clean_folder_contents,
-                );
-            }
-            ExplorerSubTab::LargestFiles => {
-                render_largest_files_table(ui, state, summary, on_inspect_file, on_delete_single_file);
-            }
-            ExplorerSubTab::LargestSubdirs => {
-                render_largest_subdirs_table(ui, state, summary);
-            }
-            ExplorerSubTab::Extensions => {
-                render_extensions_table(ui, summary);
-            }
-        }
-    } else if !state.is_scanning {
-        Frame::none()
-            .fill(ThemeColors::BG_CARD)
-            .rounding(Rounding::same(8.0))
-            .stroke(Stroke::new(1.0, ThemeColors::BORDER_QUIET))
-            .inner_margin(Margin::same(32.0))
-            .show(ui, |ui| {
-                ui.vertical_centered(|ui| {
-                    ui.label(RichText::new("No directory scanned yet").color(ThemeColors::TEXT_MUTED).size(16.0));
-                    ui.add_space(4.0);
-                    ui.label(RichText::new("Select a drive or folder above and click 'Analyze Folder' to view the full folder tree and calculate sizes.").color(ThemeColors::TEXT_SECONDARY));
-                });
-            });
-    }
+    // BOTTOM HALF: [Bottom-Left: Drives Overview] | [Bottom-Right: Interactive Pie Chart]
+    ui.allocate_ui(Vec2::new(ui.available_width(), bottom_quadrant_height), |ui| {
+        ui.columns(2, |cols| {
+            // Bottom-Left: Drives Overview (Drive | Size | Used | Free)
+            render_bottom_left_drives_table(&mut cols[0], state, on_start_scan);
+
+            // Bottom-Right: Interactive Graphical Pie Chart with Hover Callout
+            render_bottom_right_chart(&mut cols[1], state);
+        });
+    });
 }
 
-fn render_path_selector_bar(
+// ------------------------------------------------------------------------------------------------
+// 1. Pro Toolbar
+// ------------------------------------------------------------------------------------------------
+
+fn render_pro_toolbar(
     ui: &mut Ui,
     state: &mut ExplorerViewState,
     on_start_scan: &mut impl FnMut(PathBuf),
@@ -163,27 +122,56 @@ fn render_path_selector_bar(
         .fill(ThemeColors::BG_CARD)
         .rounding(Rounding::same(6.0))
         .stroke(Stroke::new(1.0, ThemeColors::BORDER_QUIET))
-        .inner_margin(Margin::same(12.0))
+        .inner_margin(Margin::symmetric(10.0, 6.0))
         .show(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.label(RichText::new("Drives:").color(ThemeColors::TEXT_MUTED).strong());
+                // Scan / Stop button
+                if state.is_scanning {
+                    if ui.button(RichText::new("Stop").color(ThemeColors::STATUS_ERROR).strong()).clicked() {
+                        on_cancel_scan();
+                    }
+                } else {
+                    if ui.button(RichText::new("Scan").color(Color32::WHITE).strong()).clicked() {
+                        let path = PathBuf::from(&state.selected_path);
+                        if path.exists() {
+                            on_start_scan(path);
+                        }
+                    }
+                }
 
-                for drive in &state.available_drives {
-                    let is_active = state.selected_path.starts_with(drive);
-                    let btn = egui::Button::new(
-                        RichText::new(drive).color(if is_active { ThemeColors::ACCENT } else { ThemeColors::TEXT_PRIMARY }),
-                    );
-                    if ui.add(btn).clicked() {
-                        state.selected_path = drive.clone();
+                if ui.button("Refresh").clicked() {
+                    state.available_drives = get_all_drives_space_info();
+                    let path = PathBuf::from(&state.selected_path);
+                    if path.exists() && !state.is_scanning {
+                        on_start_scan(path);
                     }
                 }
 
                 ui.separator();
-                ui.label(RichText::new("Target:").color(ThemeColors::TEXT_MUTED).strong());
 
+                // Drive Dropdown
+                let current_drive_label = state
+                    .available_drives
+                    .iter()
+                    .find(|d| state.selected_path.starts_with(&d.letter))
+                    .map(|d| format!("Drive ({})", d.letter.trim_end_matches('\\')))
+                    .unwrap_or_else(|| "Drives".to_string());
+
+                ComboBox::from_id_salt("toolbar_drive_combo")
+                    .selected_text(current_drive_label)
+                    .show_ui(ui, |ui| {
+                        for d in &state.available_drives {
+                            let label = format!("Local Disk ({}) - {}", d.letter.trim_end_matches('\\'), state.selected_unit.format(d.total_bytes));
+                            if ui.selectable_label(state.selected_path.starts_with(&d.letter), label).clicked() {
+                                state.selected_path = d.letter.clone();
+                            }
+                        }
+                    });
+
+                // Target Path textfield
                 ui.add(
                     egui::TextEdit::singleline(&mut state.selected_path)
-                        .desired_width(360.0),
+                        .desired_width(280.0),
                 );
 
                 if ui.button("Browse...").clicked() {
@@ -192,17 +180,25 @@ fn render_path_selector_bar(
                     }
                 }
 
-                if state.is_scanning {
-                    if ui.button(RichText::new("Cancel Scan").color(ThemeColors::STATUS_ERROR)).clicked() {
-                        on_cancel_scan();
-                    }
-                } else {
-                    if ui.button(RichText::new("Analyze Folder").color(Color32::WHITE).strong()).clicked() {
-                        let path = PathBuf::from(&state.selected_path);
-                        if path.exists() {
-                            on_start_scan(path);
-                        }
-                    }
+                ui.separator();
+
+                // Unit selection buttons (B, KB, MB, GB, AUTO)
+                ui.label(RichText::new("Units:").color(ThemeColors::TEXT_MUTED));
+
+                if ui.selectable_label(state.selected_unit == SizeUnit::Bytes, "B").clicked() {
+                    state.selected_unit = SizeUnit::Bytes;
+                }
+                if ui.selectable_label(state.selected_unit == SizeUnit::Kilobytes, "KB").clicked() {
+                    state.selected_unit = SizeUnit::Kilobytes;
+                }
+                if ui.selectable_label(state.selected_unit == SizeUnit::Megabytes, "MB").clicked() {
+                    state.selected_unit = SizeUnit::Megabytes;
+                }
+                if ui.selectable_label(state.selected_unit == SizeUnit::Gigabytes, "GB").clicked() {
+                    state.selected_unit = SizeUnit::Gigabytes;
+                }
+                if ui.selectable_label(state.selected_unit == SizeUnit::Auto, "AUTO").clicked() {
+                    state.selected_unit = SizeUnit::Auto;
                 }
             });
         });
@@ -217,538 +213,351 @@ fn render_scanning_indicator(
 ) {
     Frame::none()
         .fill(ThemeColors::BG_CARD)
-        .rounding(Rounding::same(6.0))
-        .stroke(Stroke::new(1.0, ThemeColors::BORDER_QUIET))
-        .inner_margin(Margin::same(12.0))
+        .rounding(Rounding::same(4.0))
+        .stroke(Stroke::new(1.0, ThemeColors::ACCENT))
+        .inner_margin(Margin::symmetric(10.0, 4.0))
         .show(ui, |ui| {
-            ui.vertical(|ui| {
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("Scanning:").color(ThemeColors::ACCENT).strong());
-                    ui.label(
-                        RichText::new(current_scan_path)
-                            .color(ThemeColors::TEXT_SECONDARY)
-                            .monospace(),
-                    );
-                });
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("Scanning:").color(ThemeColors::ACCENT).strong());
+                ui.label(RichText::new(current_scan_path).color(ThemeColors::TEXT_SECONDARY).monospace().size(11.0));
 
-                ui.add_space(4.0);
-
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new(format!("Files scanned: {}", current_files_count)).color(ThemeColors::TEXT_PRIMARY));
-                    ui.add_space(16.0);
-                    ui.label(RichText::new(format!("Bytes processed: {}", format_bytes(current_bytes_count))).color(ThemeColors::STATUS_INFO).strong());
-
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.button(RichText::new("Stop").color(ThemeColors::STATUS_ERROR)).clicked() {
-                            on_cancel_scan();
-                        }
-                    });
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.small_button(RichText::new("Stop").color(ThemeColors::STATUS_ERROR)).clicked() {
+                        on_cancel_scan();
+                    }
+                    ui.label(RichText::new(format!("{} bytes ({} files)", current_bytes_count, current_files_count)).color(ThemeColors::STATUS_INFO).strong());
                 });
             });
         });
 }
 
-fn render_summary_banner(ui: &mut Ui, summary: &DirScanSummary) {
+// ------------------------------------------------------------------------------------------------
+// 2. Top-Left: Directory Tree View (Folder | Size)
+// ------------------------------------------------------------------------------------------------
+
+fn render_top_left_folder_tree(ui: &mut Ui, state: &mut ExplorerViewState) {
     Frame::none()
         .fill(ThemeColors::BG_CARD)
         .rounding(Rounding::same(6.0))
         .stroke(Stroke::new(1.0, ThemeColors::BORDER_QUIET))
-        .inner_margin(Margin::same(12.0))
+        .inner_margin(Margin::same(8.0))
         .show(ui, |ui| {
+            // Header Bar
             ui.horizontal(|ui| {
-                ui.label(RichText::new("Total Size:").color(ThemeColors::TEXT_MUTED));
-                ui.label(RichText::new(summary.formatted_total_size()).color(ThemeColors::ACCENT).strong());
-
-                ui.add_space(16.0);
-                ui.label(RichText::new("Accessible:").color(ThemeColors::TEXT_MUTED));
-                ui.label(RichText::new(summary.formatted_accessible_size()).color(ThemeColors::STATUS_SUCCESS));
-
-                if summary.inaccessible_files > 0 {
-                    ui.add_space(16.0);
-                    ui.label(RichText::new("Inaccessible Items:").color(ThemeColors::TEXT_MUTED));
-                    ui.label(RichText::new(format!("{}", summary.inaccessible_files)).color(ThemeColors::STATUS_WARNING).strong());
-                }
-
-                ui.add_space(16.0);
-                ui.label(RichText::new(format!("Files: {}", summary.total_files)).color(ThemeColors::TEXT_SECONDARY));
-
-                ui.add_space(8.0);
-                ui.label(RichText::new(format!("Folders: {}", summary.total_dirs)).color(ThemeColors::TEXT_SECONDARY));
-
+                ui.label(RichText::new("Folder").strong().color(ThemeColors::TEXT_PRIMARY));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.label(RichText::new(format!("Scan time: {} ms", summary.duration_ms)).color(ThemeColors::TEXT_MUTED));
+                    ui.label(RichText::new("Size").strong().color(ThemeColors::TEXT_PRIMARY));
                 });
             });
-        });
-}
+            ui.separator();
 
-// ------------------------------------------------------------------------------------------------
-// Folder Tree View Implementation
-// ------------------------------------------------------------------------------------------------
+            let summary_opt = state.scan_summary.clone();
+            if let Some(summary) = summary_opt {
+                if let Some(root_node) = summary.root_tree {
+                    if state.expanded_paths.is_empty() {
+                        state.expanded_paths.insert(root_node.path.clone());
+                        if state.selected_node.is_none() {
+                            state.selected_node = Some(root_node.clone());
+                        }
+                    }
 
-fn render_folder_tree_subtab(
-    ui: &mut Ui,
-    state: &mut ExplorerViewState,
-    summary: &DirScanSummary,
-    on_start_scan: &mut impl FnMut(PathBuf),
-    on_inspect_file: &mut impl FnMut(&FileInfo),
-    on_delete_single_file: &mut impl FnMut(&FileInfo),
-    on_clean_folder_contents: &mut impl FnMut(&PathBuf),
-) {
-    if let Some(root_node) = &summary.root_tree {
-        // Expand root by default if empty
-        if state.expanded_paths.is_empty() {
-            state.expanded_paths.insert(root_node.path.clone());
-            state.selected_node = Some(root_node.clone());
-        }
+                    let unit = state.selected_unit;
+                    let mut node_to_select = None;
 
-        // Toolbar for tree controls
-        ui.horizontal(|ui| {
-            if ui.small_button("Expand All Top Levels").clicked() {
-                expand_top_levels(root_node, &mut state.expanded_paths, 0, 2);
-            }
-            if ui.small_button("Collapse All").clicked() {
-                state.expanded_paths.clear();
-                state.expanded_paths.insert(root_node.path.clone());
-            }
+                    ScrollArea::both().auto_shrink([false, false]).show(ui, |ui| {
+                        render_tree_recursive_row(
+                            ui,
+                            &root_node,
+                            unit,
+                            0,
+                            &mut state.expanded_paths,
+                            &mut node_to_select,
+                        );
+                    });
 
-            ui.label(RichText::new(format!("Root: {}", root_node.path.display())).color(ThemeColors::TEXT_MUTED));
-        });
-
-        ui.add_space(4.0);
-
-        // Split view: Left = Scrollable Tree, Right = Selected Folder Inspector
-        ui.columns(2, |cols| {
-            // LEFT COLUMN: Hierarchical Folder Tree
-            cols[0].group(|ui| {
-                ui.label(RichText::new("Folder Hierarchy (Sorted by Size)").strong().color(ThemeColors::TEXT_PRIMARY));
-                ui.separator();
-
-                let mut node_to_select: Option<FolderTreeNode> = None;
-                let root_total_size = root_node.total_size.max(1);
-                let query = state.tree_search_query.to_lowercase();
-
-                ScrollArea::both().auto_shrink([false, false]).show(ui, |ui| {
-                    render_tree_node_row(
-                        ui,
-                        root_node,
-                        root_total_size,
-                        0,
-                        &mut state.expanded_paths,
-                        &mut node_to_select,
-                        &query,
-                    );
-                });
-
-                if let Some(node) = node_to_select {
-                    state.selected_node = Some(node);
-                }
-            });
-
-            // RIGHT COLUMN: Selected Folder Inspector
-            cols[1].group(|ui| {
-                render_selected_node_inspector(
-                    ui,
-                    state,
-                    on_start_scan,
-                    on_inspect_file,
-                    on_delete_single_file,
-                    on_clean_folder_contents,
-                );
-            });
-        });
-    } else {
-        ui.label(RichText::new("Folder tree information is not available.").color(ThemeColors::TEXT_MUTED));
-    }
-}
-
-fn expand_top_levels(node: &FolderTreeNode, expanded: &mut HashSet<PathBuf>, current_depth: usize, max_depth: usize) {
-    if current_depth <= max_depth {
-        expanded.insert(node.path.clone());
-        for child in &node.children {
-            expand_top_levels(child, expanded, current_depth + 1, max_depth);
-        }
-    }
-}
-
-fn render_tree_node_row(
-    ui: &mut Ui,
-    node: &FolderTreeNode,
-    root_total_size: u64,
-    depth: usize,
-    expanded_paths: &mut HashSet<PathBuf>,
-    node_to_select: &mut Option<FolderTreeNode>,
-    search_query: &str,
-) {
-    let is_expanded = expanded_paths.contains(&node.path);
-    let has_children = !node.children.is_empty();
-    let matches_search = search_query.is_empty() || node.name.to_lowercase().contains(search_query);
-
-    if matches_search || is_expanded {
-        ui.horizontal(|ui| {
-            // Indentation
-            if depth > 0 {
-                ui.add_space((depth as f32) * 14.0);
-            }
-
-            // Expander button
-            if has_children {
-                let icon = if is_expanded { "▼" } else { "▶" };
-                if ui.small_button(icon).clicked() {
-                    if is_expanded {
-                        expanded_paths.remove(&node.path);
-                    } else {
-                        expanded_paths.insert(node.path.clone());
+                    if let Some(node) = node_to_select {
+                        state.selected_node = Some(node);
                     }
                 }
             } else {
-                ui.add_space(18.0);
+                ui.vertical_centered(|ui| {
+                    ui.add_space(30.0);
+                    ui.label(RichText::new("Tree empty. Click 'Scan' above to explore.").color(ThemeColors::TEXT_MUTED));
+                });
             }
-
-            // Folder label (selectable)
-            let name_color = if matches_search && !search_query.is_empty() {
-                ThemeColors::STATUS_INFO
-            } else if node.is_inaccessible {
-                ThemeColors::STATUS_WARNING
-            } else {
-                ThemeColors::TEXT_PRIMARY
-            };
-
-            let label_btn = ui.selectable_label(
-                false,
-                RichText::new(&node.name).color(name_color).strong(),
-            );
-
-            if label_btn.clicked() {
-                *node_to_select = Some(node.clone());
-            }
-
-            // Proportion bar
-            let fraction = (node.total_size as f32 / root_total_size as f32).clamp(0.0, 1.0);
-            ui.add(ProgressBar::new(fraction).desired_width(60.0));
-
-            // Formatted size
-            ui.label(RichText::new(node.formatted_size()).color(ThemeColors::ACCENT).strong());
-
-            // Child count summary
-            ui.label(
-                RichText::new(format!("({} files, {} subfolders)", node.file_count, node.dir_count))
-                    .color(ThemeColors::TEXT_MUTED)
-                    .size(11.0),
-            );
         });
-    }
+}
 
-    // Render children recursively if expanded
+fn render_tree_recursive_row(
+    ui: &mut Ui,
+    node: &FolderTreeNode,
+    unit: SizeUnit,
+    depth: usize,
+    expanded_paths: &mut HashSet<PathBuf>,
+    node_to_select: &mut Option<FolderTreeNode>,
+) {
+    let is_expanded = expanded_paths.contains(&node.path);
+    let has_children = !node.children.is_empty();
+
+    ui.horizontal(|ui| {
+        if depth > 0 {
+            ui.add_space((depth as f32) * 12.0);
+        }
+
+        // Expander
+        if has_children {
+            let icon = if is_expanded { "▼" } else { "▶" };
+            if ui.small_button(icon).clicked() {
+                if is_expanded {
+                    expanded_paths.remove(&node.path);
+                } else {
+                    expanded_paths.insert(node.path.clone());
+                }
+            }
+        } else {
+            ui.add_space(16.0);
+        }
+
+        // Folder name
+        let label = ui.selectable_label(
+            false,
+            RichText::new(&node.name).color(ThemeColors::TEXT_PRIMARY),
+        );
+        if label.clicked() {
+            *node_to_select = Some(node.clone());
+        }
+
+        // Right-aligned Size
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.label(RichText::new(node.formatted_size_with_unit(unit)).color(ThemeColors::ACCENT).strong());
+        });
+    });
+
     if is_expanded && has_children {
         for child in &node.children {
-            render_tree_node_row(
-                ui,
-                child,
-                root_total_size,
-                depth + 1,
-                expanded_paths,
-                node_to_select,
-                search_query,
-            );
+            render_tree_recursive_row(ui, child, unit, depth + 1, expanded_paths, node_to_select);
         }
     }
 }
 
-fn render_selected_node_inspector(
+// ------------------------------------------------------------------------------------------------
+// 3. Top-Right: Contents Detailed List Table
+// ------------------------------------------------------------------------------------------------
+
+fn render_top_right_contents_table(
     ui: &mut Ui,
-    state: &ExplorerViewState,
-    on_start_scan: &mut impl FnMut(PathBuf),
+    state: &mut ExplorerViewState,
     on_inspect_file: &mut impl FnMut(&FileInfo),
     on_delete_single_file: &mut impl FnMut(&FileInfo),
     on_clean_folder_contents: &mut impl FnMut(&PathBuf),
 ) {
-    if let Some(node) = &state.selected_node {
-        ui.heading(RichText::new(&node.name).color(ThemeColors::TEXT_PRIMARY).strong());
-        ui.label(RichText::new(node.path.to_string_lossy()).color(ThemeColors::TEXT_MUTED).size(11.0));
+    Frame::none()
+        .fill(ThemeColors::BG_CARD)
+        .rounding(Rounding::same(6.0))
+        .stroke(Stroke::new(1.0, ThemeColors::BORDER_QUIET))
+        .inner_margin(Margin::same(8.0))
+        .show(ui, |ui| {
+            let unit = state.selected_unit;
 
-        ui.separator();
+            if let Some(node) = &state.selected_node {
+                // Header with breadcrumb and actions
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new(&node.name).strong().color(ThemeColors::TEXT_PRIMARY));
+                    ui.label(RichText::new(format!("({})", unit.format(node.total_size))).color(ThemeColors::ACCENT));
 
-        egui::Grid::new("selected_node_stats_grid")
-            .spacing([12.0, 4.0])
-            .show(ui, |ui| {
-                ui.label(RichText::new("Total Tree Size:").color(ThemeColors::TEXT_MUTED));
-                ui.label(RichText::new(node.formatted_size()).color(ThemeColors::ACCENT).strong());
-                ui.end_row();
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.small_button(RichText::new("Clean Contents").color(ThemeColors::STATUS_ERROR)).clicked() {
+                            on_clean_folder_contents(&node.path);
+                        }
+                        if ui.small_button("Open Explorer").clicked() {
+                            let _ = Command::new("explorer.exe").arg(node.path.to_string_lossy().to_string()).spawn();
+                        }
+                    });
+                });
 
-                ui.label(RichText::new("Direct Files Size:").color(ThemeColors::TEXT_MUTED));
-                ui.label(RichText::new(node.formatted_immediate_size()).color(ThemeColors::TEXT_PRIMARY));
-                ui.end_row();
+                ui.separator();
 
-                ui.label(RichText::new("Total Subtree Files:").color(ThemeColors::TEXT_MUTED));
-                ui.label(RichText::new(format!("{}", node.file_count)).color(ThemeColors::TEXT_SECONDARY));
-                ui.end_row();
+                // Detailed Table
+                let total_parent_size = node.total_size.max(1);
 
-                ui.label(RichText::new("Total Subdirectories:").color(ThemeColors::TEXT_MUTED));
-                ui.label(RichText::new(format!("{}", node.dir_count)).color(ThemeColors::TEXT_SECONDARY));
-                ui.end_row();
-            });
+                ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+                    egui::Grid::new("pro_contents_grid")
+                        .striped(true)
+                        .spacing([10.0, 4.0])
+                        .min_col_width(60.0)
+                        .show(ui, |ui| {
+                            ui.label(RichText::new("Name").strong().color(ThemeColors::TEXT_MUTED));
+                            ui.label(RichText::new("Size").strong().color(ThemeColors::TEXT_MUTED));
+                            ui.label(RichText::new("Percent").strong().color(ThemeColors::TEXT_MUTED));
+                            ui.label(RichText::new("Files").strong().color(ThemeColors::TEXT_MUTED));
+                            ui.label(RichText::new("Folders").strong().color(ThemeColors::TEXT_MUTED));
+                            ui.label(RichText::new("Attributes").strong().color(ThemeColors::TEXT_MUTED));
+                            ui.label(RichText::new("Actions").strong().color(ThemeColors::TEXT_MUTED));
+                            ui.end_row();
 
-        ui.add_space(6.0);
+                            // Subdirectories rows
+                            for child in &node.children {
+                                let pct = (child.total_size as f32 / total_parent_size as f32) * 100.0;
 
-        // Action buttons
-        ui.horizontal(|ui| {
-            if ui.button(RichText::new("Analyze from here").color(ThemeColors::ACCENT)).clicked() {
-                on_start_scan(node.path.clone());
-            }
+                                ui.horizontal(|ui| {
+                                    ui.label(RichText::new("[DIR]").color(ThemeColors::STATUS_INFO).size(10.0));
+                                    ui.label(RichText::new(&child.name).strong().color(ThemeColors::TEXT_PRIMARY));
+                                });
 
-            if ui.button("Open in Explorer").clicked() {
-                open_in_file_explorer(&node.path);
-            }
+                                ui.label(RichText::new(unit.format(child.total_size)).color(ThemeColors::ACCENT).strong());
 
-            if ui.button(RichText::new("Clean contents").color(ThemeColors::STATUS_ERROR)).clicked() {
-                on_clean_folder_contents(&node.path);
+                                ui.horizontal(|ui| {
+                                    ui.label(RichText::new(format!("{:.1}%", pct)).color(ThemeColors::TEXT_SECONDARY));
+                                    ui.add(ProgressBar::new(pct / 100.0).desired_width(45.0));
+                                });
+
+                                ui.label(RichText::new(format!("{}", child.file_count)).color(ThemeColors::TEXT_MUTED));
+                                ui.label(RichText::new(format!("{}", child.dir_count)).color(ThemeColors::TEXT_MUTED));
+                                ui.label(RichText::new("D").color(ThemeColors::TEXT_MUTED));
+
+                                ui.horizontal(|ui| {
+                                    if ui.small_button("Clean").clicked() {
+                                        on_clean_folder_contents(&child.path);
+                                    }
+                                });
+                                ui.end_row();
+                            }
+
+                            // Direct files rows
+                            for file in &node.direct_files {
+                                let pct = (file.size as f32 / total_parent_size as f32) * 100.0;
+
+                                ui.horizontal(|ui| {
+                                    ui.label(RichText::new("[FILE]").color(ThemeColors::TEXT_MUTED).size(10.0));
+                                    ui.label(RichText::new(&file.name).color(ThemeColors::TEXT_PRIMARY));
+                                });
+
+                                ui.label(RichText::new(unit.format(file.size)).color(ThemeColors::TEXT_SECONDARY));
+
+                                ui.horizontal(|ui| {
+                                    ui.label(RichText::new(format!("{:.1}%", pct)).color(ThemeColors::TEXT_MUTED));
+                                    ui.add(ProgressBar::new(pct / 100.0).desired_width(45.0));
+                                });
+
+                                ui.label(RichText::new("-").color(ThemeColors::TEXT_MUTED));
+                                ui.label(RichText::new("-").color(ThemeColors::TEXT_MUTED));
+                                ui.label(RichText::new(if file.is_readonly { "RA" } else { "A" }).color(ThemeColors::TEXT_MUTED));
+
+                                ui.horizontal(|ui| {
+                                    if ui.small_button("Inspect").clicked() {
+                                        on_inspect_file(file);
+                                    }
+                                    if ui.small_button(RichText::new("Del").color(ThemeColors::STATUS_ERROR)).clicked() {
+                                        on_delete_single_file(file);
+                                    }
+                                });
+                                ui.end_row();
+                            }
+                        });
+                });
+            } else {
+                ui.vertical_centered(|ui| {
+                    ui.add_space(30.0);
+                    ui.label(RichText::new("Select a folder in the tree to view its contents.").color(ThemeColors::TEXT_MUTED));
+                });
             }
         });
+}
 
-        ui.add_space(8.0);
-        ui.separator();
-        ui.label(RichText::new(format!("Direct Files in this Folder ({})", node.direct_files.len())).color(ThemeColors::TEXT_PRIMARY).strong());
+// ------------------------------------------------------------------------------------------------
+// 4. Bottom-Left: Drives Overview Table (Drive | Size | Used | Free)
+// ------------------------------------------------------------------------------------------------
 
-        if node.direct_files.is_empty() {
-            ui.label(RichText::new("No direct files in this folder (only subdirectories).").color(ThemeColors::TEXT_MUTED));
-        } else {
+fn render_bottom_left_drives_table(
+    ui: &mut Ui,
+    state: &mut ExplorerViewState,
+    on_start_scan: &mut impl FnMut(PathBuf),
+) {
+    Frame::none()
+        .fill(ThemeColors::BG_CARD)
+        .rounding(Rounding::same(6.0))
+        .stroke(Stroke::new(1.0, ThemeColors::BORDER_QUIET))
+        .inner_margin(Margin::same(8.0))
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("Logical Drives Overview").strong().color(ThemeColors::TEXT_PRIMARY));
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.small_button("Refresh Drives").clicked() {
+                        state.available_drives = get_all_drives_space_info();
+                    }
+                });
+            });
+            ui.separator();
+
+            let unit = state.selected_unit;
+            let mut drive_to_scan = None;
+
             ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-                egui::Grid::new("selected_node_direct_files_grid")
+                egui::Grid::new("bottom_drives_grid")
                     .striped(true)
-                    .spacing([8.0, 4.0])
-                    .min_col_width(70.0)
+                    .spacing([10.0, 6.0])
+                    .min_col_width(65.0)
                     .show(ui, |ui| {
-                        ui.label(RichText::new("File Name").strong().color(ThemeColors::TEXT_MUTED));
-                        ui.label(RichText::new("Size").strong().color(ThemeColors::TEXT_MUTED));
-                        ui.label(RichText::new("Modified").strong().color(ThemeColors::TEXT_MUTED));
-                        ui.label(RichText::new("Actions").strong().color(ThemeColors::TEXT_MUTED));
+                        ui.label(RichText::new("Drive").strong().color(ThemeColors::TEXT_MUTED));
+                        ui.label(RichText::new("Total Size").strong().color(ThemeColors::TEXT_MUTED));
+                        ui.label(RichText::new("Used Space").strong().color(ThemeColors::TEXT_MUTED));
+                        ui.label(RichText::new("Free Space").strong().color(ThemeColors::TEXT_MUTED));
+                        ui.label(RichText::new("Usage %").strong().color(ThemeColors::TEXT_MUTED));
                         ui.end_row();
 
-                        for file in &node.direct_files {
-                            ui.label(RichText::new(&file.name).color(ThemeColors::TEXT_PRIMARY));
-                            ui.label(RichText::new(file.formatted_size()).color(ThemeColors::ACCENT));
-                            ui.label(RichText::new(file.formatted_modified()).color(ThemeColors::TEXT_MUTED).size(11.0));
+                        for drive in &state.available_drives {
+                            let is_active = state.selected_path.starts_with(&drive.letter);
 
+                            let label = ui.selectable_label(
+                                is_active,
+                                RichText::new(&drive.letter).strong().color(if is_active { ThemeColors::ACCENT } else { ThemeColors::TEXT_PRIMARY }),
+                            );
+                            if label.clicked() {
+                                state.selected_path = drive.letter.clone();
+                                drive_to_scan = Some(PathBuf::from(&drive.letter));
+                            }
+
+                            ui.label(RichText::new(drive.formatted_size(unit)).color(ThemeColors::TEXT_PRIMARY));
+                            ui.label(RichText::new(drive.formatted_used(unit)).color(ThemeColors::STATUS_WARNING));
+                            ui.label(RichText::new(drive.formatted_free(unit)).color(ThemeColors::STATUS_SUCCESS));
+
+                            let pct = drive.used_percent();
                             ui.horizontal(|ui| {
-                                if ui.small_button("Inspect").clicked() {
-                                    on_inspect_file(file);
-                                }
-                                if ui.small_button(RichText::new("Delete").color(ThemeColors::STATUS_ERROR)).clicked() {
-                                    on_delete_single_file(file);
-                                }
+                                ui.label(RichText::new(format!("{:.1}%", pct)).color(ThemeColors::TEXT_SECONDARY));
+                                ui.add(ProgressBar::new(pct / 100.0).desired_width(60.0));
                             });
+
                             ui.end_row();
                         }
                     });
             });
-        }
-    } else {
-        ui.vertical_centered(|ui| {
-            ui.add_space(40.0);
-            ui.label(RichText::new("Select a folder in the tree to inspect details.").color(ThemeColors::TEXT_MUTED));
+
+            if let Some(target) = drive_to_scan {
+                if !state.is_scanning {
+                    on_start_scan(target);
+                }
+            }
         });
-    }
-}
-
-fn open_in_file_explorer(path: &PathBuf) {
-    let _ = Command::new("explorer.exe")
-        .arg(path.to_string_lossy().to_string())
-        .spawn();
 }
 
 // ------------------------------------------------------------------------------------------------
-// Other Subtabs (Largest Files, Largest Subdirectories, Extensions)
+// 5. Bottom-Right: Interactive Graphical Pie Chart
 // ------------------------------------------------------------------------------------------------
 
-fn render_largest_files_table(
-    ui: &mut Ui,
-    state: &mut ExplorerViewState,
-    summary: &DirScanSummary,
-    on_inspect_file: &mut impl FnMut(&FileInfo),
-    on_delete_single_file: &mut impl FnMut(&FileInfo),
-) {
-    let query = state.search_query.to_lowercase();
-    let mut filtered_files: Vec<&FileInfo> = summary
-        .largest_files
-        .iter()
-        .filter(|f| {
-            if query.is_empty() {
-                true
+fn render_bottom_right_chart(ui: &mut Ui, state: &mut ExplorerViewState) {
+    Frame::none()
+        .fill(ThemeColors::BG_CARD)
+        .rounding(Rounding::same(6.0))
+        .stroke(Stroke::new(1.0, ThemeColors::BORDER_QUIET))
+        .inner_margin(Margin::same(8.0))
+        .show(ui, |ui| {
+            if let Some(node) = &state.selected_node {
+                render_pro_chart(ui, node, state.selected_unit, &mut state.chart_mode);
             } else {
-                f.name.to_lowercase().contains(&query) || f.extension.to_lowercase().contains(&query)
+                ui.vertical_centered(|ui| {
+                    ui.add_space(30.0);
+                    ui.label(RichText::new("Select a folder above to view interactive storage visualization.").color(ThemeColors::TEXT_MUTED));
+                });
             }
-        })
-        .collect();
-
-    let dir = state.sort_direction;
-    match state.sort_column {
-        SortColumn::Name => {
-            filtered_files.sort_by(|a, b| {
-                let res = a.name.to_lowercase().cmp(&b.name.to_lowercase());
-                if dir == SortDirection::Descending { res.reverse() } else { res }
-            });
-        }
-        SortColumn::Size => {
-            filtered_files.sort_by(|a, b| {
-                let res = a.size.cmp(&b.size);
-                if dir == SortDirection::Descending { res.reverse() } else { res }
-            });
-        }
-        SortColumn::DateModified => {
-            filtered_files.sort_by(|a, b| {
-                let res = a.modified.cmp(&b.modified);
-                if dir == SortDirection::Descending { res.reverse() } else { res }
-            });
-        }
-        SortColumn::Extension => {
-            filtered_files.sort_by(|a, b| {
-                let res = a.extension.cmp(&b.extension);
-                if dir == SortDirection::Descending { res.reverse() } else { res }
-            });
-        }
-    }
-
-    let sort_col = state.sort_column;
-    let sort_dir = state.sort_direction;
-
-    ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-        egui::Grid::new("largest_files_grid")
-            .striped(true)
-            .spacing([12.0, 6.0])
-            .min_col_width(80.0)
-            .show(ui, |ui| {
-                let name_arrow = if sort_col == SortColumn::Name { if sort_dir == SortDirection::Ascending { " ▲" } else { " ▼" } } else { "" };
-                if ui.button(RichText::new(format!("Name{}", name_arrow)).strong().color(ThemeColors::TEXT_MUTED)).clicked() {
-                    toggle_sort(state, SortColumn::Name);
-                }
-
-                let ext_arrow = if sort_col == SortColumn::Extension { if sort_dir == SortDirection::Ascending { " ▲" } else { " ▼" } } else { "" };
-                if ui.button(RichText::new(format!("Extension{}", ext_arrow)).strong().color(ThemeColors::TEXT_MUTED)).clicked() {
-                    toggle_sort(state, SortColumn::Extension);
-                }
-
-                let size_arrow = if sort_col == SortColumn::Size { if sort_dir == SortDirection::Ascending { " ▲" } else { " ▼" } } else { "" };
-                if ui.button(RichText::new(format!("Size{}", size_arrow)).strong().color(ThemeColors::TEXT_MUTED)).clicked() {
-                    toggle_sort(state, SortColumn::Size);
-                }
-
-                let date_arrow = if sort_col == SortColumn::DateModified { if sort_dir == SortDirection::Ascending { " ▲" } else { " ▼" } } else { "" };
-                if ui.button(RichText::new(format!("Last Modified{}", date_arrow)).strong().color(ThemeColors::TEXT_MUTED)).clicked() {
-                    toggle_sort(state, SortColumn::DateModified);
-                }
-
-                ui.label(RichText::new("Attributes").strong().color(ThemeColors::TEXT_MUTED));
-                ui.label(RichText::new("Actions").strong().color(ThemeColors::TEXT_MUTED));
-                ui.end_row();
-
-                for file in filtered_files {
-                    ui.label(RichText::new(&file.name).color(ThemeColors::TEXT_PRIMARY));
-                    ui.label(RichText::new(&file.extension).color(ThemeColors::TEXT_SECONDARY));
-                    ui.label(RichText::new(file.formatted_size()).color(ThemeColors::ACCENT).strong());
-                    ui.label(RichText::new(file.formatted_modified()).color(ThemeColors::TEXT_MUTED));
-
-                    let attr = if file.is_readonly { "Read-Only" } else { "Normal" };
-                    ui.label(RichText::new(attr).color(if file.is_readonly { ThemeColors::STATUS_WARNING } else { ThemeColors::TEXT_MUTED }));
-
-                    ui.horizontal(|ui| {
-                        if ui.small_button("Inspect").clicked() {
-                            on_inspect_file(file);
-                        }
-                        if ui.small_button(RichText::new("Delete").color(ThemeColors::STATUS_ERROR)).clicked() {
-                            on_delete_single_file(file);
-                        }
-                    });
-                    ui.end_row();
-                }
-            });
-    });
-}
-
-fn toggle_sort(state: &mut ExplorerViewState, col: SortColumn) {
-    if state.sort_column == col {
-        state.sort_direction = match state.sort_direction {
-            SortDirection::Ascending => SortDirection::Descending,
-            SortDirection::Descending => SortDirection::Ascending,
-        };
-    } else {
-        state.sort_column = col;
-        state.sort_direction = if col == SortColumn::Size || col == SortColumn::DateModified {
-            SortDirection::Descending
-        } else {
-            SortDirection::Ascending
-        };
-    }
-}
-
-fn render_largest_subdirs_table(
-    ui: &mut Ui,
-    state: &ExplorerViewState,
-    summary: &DirScanSummary,
-) {
-    let query = state.search_query.to_lowercase();
-    let filtered_subdirs: Vec<&crate::core::types::DirEntrySummary> = summary
-        .largest_subdirs
-        .iter()
-        .filter(|d| {
-            if query.is_empty() {
-                true
-            } else {
-                d.name.to_lowercase().contains(&query)
-            }
-        })
-        .collect();
-
-    ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-        egui::Grid::new("largest_subdirs_grid")
-            .striped(true)
-            .spacing([12.0, 6.0])
-            .min_col_width(100.0)
-            .show(ui, |ui| {
-                ui.label(RichText::new("Folder Name").strong().color(ThemeColors::TEXT_MUTED));
-                ui.label(RichText::new("Cumulative Size").strong().color(ThemeColors::TEXT_MUTED));
-                ui.label(RichText::new("Files Count").strong().color(ThemeColors::TEXT_MUTED));
-                ui.label(RichText::new("Subdirectories").strong().color(ThemeColors::TEXT_MUTED));
-                ui.label(RichText::new("Path").strong().color(ThemeColors::TEXT_MUTED));
-                ui.end_row();
-
-                for dir in filtered_subdirs {
-                    ui.label(RichText::new(&dir.name).color(ThemeColors::TEXT_PRIMARY).strong());
-                    ui.label(RichText::new(dir.formatted_size()).color(ThemeColors::ACCENT).strong());
-                    ui.label(RichText::new(format!("{}", dir.file_count)).color(ThemeColors::TEXT_SECONDARY));
-                    ui.label(RichText::new(format!("{}", dir.dir_count)).color(ThemeColors::TEXT_MUTED));
-                    ui.label(RichText::new(dir.path.to_string_lossy()).color(ThemeColors::TEXT_MUTED).size(11.0));
-                    ui.end_row();
-                }
-            });
-    });
-}
-
-fn render_extensions_table(ui: &mut Ui, summary: &DirScanSummary) {
-    ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-        egui::Grid::new("extensions_grid")
-            .striped(true)
-            .spacing([12.0, 6.0])
-            .min_col_width(120.0)
-            .show(ui, |ui| {
-                ui.label(RichText::new("Extension").strong().color(ThemeColors::TEXT_MUTED));
-                ui.label(RichText::new("Files Count").strong().color(ThemeColors::TEXT_MUTED));
-                ui.label(RichText::new("Total Size").strong().color(ThemeColors::TEXT_MUTED));
-                ui.label(RichText::new("Percentage of Folder").strong().color(ThemeColors::TEXT_MUTED));
-                ui.label(RichText::new("Proportion").strong().color(ThemeColors::TEXT_MUTED));
-                ui.end_row();
-
-                for ext in &summary.extensions {
-                    ui.label(RichText::new(&ext.ext).color(ThemeColors::TEXT_PRIMARY).strong());
-                    ui.label(RichText::new(format!("{}", ext.count)).color(ThemeColors::TEXT_SECONDARY));
-                    ui.label(RichText::new(ext.formatted_size()).color(ThemeColors::ACCENT));
-                    ui.label(RichText::new(format!("{:.1}%", ext.percentage)).color(ThemeColors::TEXT_MUTED));
-
-                    let progress_fraction = (ext.percentage / 100.0).clamp(0.0, 1.0);
-                    ui.add(ProgressBar::new(progress_fraction).desired_width(150.0));
-
-                    ui.end_row();
-                }
-            });
-    });
+        });
 }

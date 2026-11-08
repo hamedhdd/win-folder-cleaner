@@ -3,6 +3,7 @@ use std::os::windows::ffi::OsStrExt;
 use std::os::windows::process::CommandExt;
 use std::path::Path;
 use std::process::Command;
+use crate::core::types::DriveSpaceInfo;
 
 #[cfg(windows)]
 use windows::core::{PCWSTR, w};
@@ -36,6 +37,44 @@ pub fn get_available_drives() -> Vec<String> {
         drives.push("C:\\".to_string());
     }
     drives
+}
+
+/// Queries capacity, used bytes, and free bytes for all available Windows drives.
+pub fn get_all_drives_space_info() -> Vec<DriveSpaceInfo> {
+    let drives = get_available_drives();
+    let mut infos = Vec::new();
+
+    for d in drives {
+        #[cfg(windows)]
+        {
+            let mut root_wide: Vec<u16> = d.encode_utf16().collect();
+            root_wide.push(0);
+
+            let mut free_available = 0u64;
+            let mut total = 0u64;
+            let mut total_free = 0u64;
+
+            unsafe {
+                let res = windows::Win32::Storage::FileSystem::GetDiskFreeSpaceExW(
+                    windows::core::PCWSTR(root_wide.as_ptr()),
+                    Some(&mut free_available),
+                    Some(&mut total),
+                    Some(&mut total_free),
+                );
+                if res.is_ok() && total > 0 {
+                    let used = total.saturating_sub(total_free);
+                    infos.push(DriveSpaceInfo {
+                        letter: d,
+                        total_bytes: total,
+                        used_bytes: used,
+                        free_bytes: total_free,
+                    });
+                }
+            }
+        }
+    }
+
+    infos
 }
 
 const CREATE_NO_WINDOW: u32 = 0x08000000;

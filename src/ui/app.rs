@@ -63,7 +63,7 @@ impl WinFolderCleanerApp {
         cleaner_state.locations = locations;
 
         let mut app = Self {
-            active_tab: 0,
+            active_tab: 1, // Default directly to Folder Size Analyzer (Pro 4-Quadrant View)
             is_admin,
             explorer_state: ExplorerViewState::default(),
             cleaner_state,
@@ -322,29 +322,158 @@ impl eframe::App for WinFolderCleanerApp {
             ctx.request_repaint();
         }
 
-        // Top Navigation Bar
+        let mut menu_browse_scan = false;
+        let mut menu_start_scan = false;
+        let mut menu_stop_scan = false;
+
+        // 1. Classic Windows Menu Bar (File, Scan, Clean, View, Help)
+        TopBottomPanel::top("pro_menu_bar")
+            .frame(
+                Frame::none()
+                    .fill(ThemeColors::BG_CARD)
+                    .stroke(Stroke::new(1.0, ThemeColors::BORDER_QUIET))
+                    .inner_margin(Margin::symmetric(10.0, 3.0)),
+            )
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    egui::menu::bar(ui, |ui| {
+                        ui.menu_button("File", |ui| {
+                            if ui.button("Browse Folder to Scan...").clicked() {
+                                menu_browse_scan = true;
+                                ui.close_menu();
+                            }
+                            if ui.button("Refresh Drives").clicked() {
+                                self.explorer_state.available_drives = crate::core::security::get_all_drives_space_info();
+                                ui.close_menu();
+                            }
+                            ui.separator();
+                            if !self.is_admin {
+                                if ui.button("Relaunch as Administrator").clicked() {
+                                    let _ = relaunch_as_admin();
+                                    ui.close_menu();
+                                }
+                                ui.separator();
+                            }
+                            if ui.button("Exit").clicked() {
+                                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                            }
+                        });
+
+                        ui.menu_button("Scan", |ui| {
+                            if ui.button("Start Scan").clicked() {
+                                menu_start_scan = true;
+                                ui.close_menu();
+                            }
+                            if ui.button("Stop Scan").clicked() {
+                                menu_stop_scan = true;
+                                ui.close_menu();
+                            }
+                        });
+
+                        ui.menu_button("Clean", |ui| {
+                            if ui.button("Temp Cleaner Suite").clicked() {
+                                self.active_tab = 2;
+                                ui.close_menu();
+                            }
+                        });
+
+                        ui.menu_button("View", |ui| {
+                            if ui.button("Folder Size Analyzer (Pro)").clicked() {
+                                self.active_tab = 1;
+                                ui.close_menu();
+                            }
+                            if ui.button("Temp Cleaner").clicked() {
+                                self.active_tab = 2;
+                                ui.close_menu();
+                            }
+                            if ui.button("Operation Log").clicked() {
+                                self.active_tab = 3;
+                                ui.close_menu();
+                            }
+                            if ui.button("System Dashboard").clicked() {
+                                self.active_tab = 0;
+                                ui.close_menu();
+                            }
+                        });
+
+                        ui.menu_button("Help", |ui| {
+                            if ui.button("About Folder Size Pro").clicked() {
+                                self.logs.push(LogEntry {
+                                    timestamp: chrono::Local::now(),
+                                    target_path: "About Dialog".to_string(),
+                                    action: "Help".to_string(),
+                                    status: LogStatus::Success,
+                                    details: "Folder Size Pro v0.1.0 (64-bit) - High-performance Windows Storage Analyzer & Cleaner".to_string(),
+                                });
+                                ui.close_menu();
+                            }
+                        });
+                    });
+
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if self.is_admin {
+                            ui.label(
+                                RichText::new("● Elevated (Admin)")
+                                    .color(ThemeColors::STATUS_SUCCESS)
+                                    .size(11.0),
+                            );
+                        } else {
+                            if ui
+                                .small_button(
+                                    RichText::new("Relaunch Elevated").color(Color32::WHITE),
+                                )
+                                .clicked()
+                            {
+                                let _ = relaunch_as_admin();
+                            }
+                            ui.label(
+                                RichText::new("● Standard User")
+                                    .color(ThemeColors::STATUS_WARNING)
+                                    .size(11.0),
+                            );
+                        }
+                    });
+                });
+            });
+
+        if menu_browse_scan {
+            if let Some(folder) = rfd::FileDialog::new().pick_folder() {
+                self.explorer_state.selected_path = folder.to_string_lossy().to_string();
+                self.start_explorer_scan(folder);
+                self.active_tab = 1;
+            }
+        }
+        if menu_start_scan {
+            let path = PathBuf::from(&self.explorer_state.selected_path);
+            if path.exists() {
+                self.start_explorer_scan(path);
+                self.active_tab = 1;
+            }
+        }
+        if menu_stop_scan {
+            self.cancel_scan();
+        }
+
+        // 2. Navigation Tabs Bar
         TopBottomPanel::top("app_top_bar")
             .frame(
                 Frame::none()
                     .fill(ThemeColors::BG_PANEL)
                     .stroke(Stroke::new(1.0, ThemeColors::BORDER_QUIET))
-                    .inner_margin(Margin::symmetric(16.0, 10.0)),
+                    .inner_margin(Margin::symmetric(16.0, 8.0)),
             )
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
                     ui.label(
-                        RichText::new("Folder Cleaner Pro")
+                        RichText::new("Folder Size Pro")
                             .color(ThemeColors::TEXT_PRIMARY)
                             .strong()
-                            .size(16.0),
+                            .size(15.0),
                     );
 
-                    ui.add_space(24.0);
+                    ui.add_space(20.0);
 
-                    if ui.selectable_label(self.active_tab == 0, "Dashboard").clicked() {
-                        self.active_tab = 0;
-                    }
-                    if ui.selectable_label(self.active_tab == 1, "Folder Explorer").clicked() {
+                    if ui.selectable_label(self.active_tab == 1, "Folder Size Analyzer").clicked() {
                         self.active_tab = 1;
                     }
                     if ui.selectable_label(self.active_tab == 2, "Temp Cleaner").clicked() {
@@ -353,30 +482,63 @@ impl eframe::App for WinFolderCleanerApp {
                     if ui.selectable_label(self.active_tab == 3, "Operation Log").clicked() {
                         self.active_tab = 3;
                     }
+                    if ui.selectable_label(self.active_tab == 0, "Dashboard").clicked() {
+                        self.active_tab = 0;
+                    }
+                });
+            });
+
+        // 3. Bottom Status Bar (matching screenshot: Idle / Files & Folders / Size / Progress)
+        TopBottomPanel::bottom("app_status_bar")
+            .frame(
+                Frame::none()
+                    .fill(ThemeColors::BG_PANEL)
+                    .stroke(Stroke::new(1.0, ThemeColors::BORDER_QUIET))
+                    .inner_margin(Margin::symmetric(14.0, 5.0)),
+            )
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    if self.explorer_state.is_scanning {
+                        ui.label(
+                            RichText::new(format!("Scanning: {}", self.current_scan_path))
+                                .color(ThemeColors::ACCENT)
+                                .size(11.0),
+                        );
+                    } else {
+                        ui.label(RichText::new("Idle").color(ThemeColors::TEXT_MUTED).size(11.0));
+                    }
+
+                    ui.separator();
+
+                    if let Some(summary) = &self.explorer_state.scan_summary {
+                        ui.label(
+                            RichText::new(format!("{} Files, {} Folders", summary.total_files, summary.total_dirs))
+                                .color(ThemeColors::TEXT_SECONDARY)
+                                .size(11.0),
+                        );
+                        ui.separator();
+                        ui.label(
+                            RichText::new(self.explorer_state.selected_unit.format(summary.total_bytes))
+                                .color(ThemeColors::ACCENT)
+                                .strong()
+                                .size(11.0),
+                        );
+                    } else {
+                        ui.label(RichText::new("0 Files, 0 Folders").color(ThemeColors::TEXT_MUTED).size(11.0));
+                        ui.separator();
+                        ui.label(RichText::new("0 Bytes").color(ThemeColors::TEXT_MUTED).size(11.0));
+                    }
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if self.is_admin {
+                        if self.explorer_state.is_scanning {
                             ui.label(
-                                RichText::new("● Elevated (Admin)")
-                                    .color(ThemeColors::STATUS_SUCCESS)
-                                    .size(12.0),
+                                RichText::new(format!("Progress: {} files", self.current_files_count))
+                                    .color(ThemeColors::STATUS_INFO)
+                                    .size(11.0),
                             );
+                            ui.add(egui::Spinner::new());
                         } else {
-                            ui.horizontal(|ui| {
-                                if ui
-                                    .small_button(
-                                        RichText::new("Relaunch Elevated").color(Color32::WHITE),
-                                    )
-                                    .clicked()
-                                {
-                                    let _ = relaunch_as_admin();
-                                }
-                                ui.label(
-                                    RichText::new("● Standard User")
-                                        .color(ThemeColors::STATUS_WARNING)
-                                        .size(12.0),
-                                );
-                            });
+                            ui.label(RichText::new("Ready").color(ThemeColors::STATUS_SUCCESS).size(11.0));
                         }
                     });
                 });

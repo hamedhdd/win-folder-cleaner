@@ -8,11 +8,20 @@ Built with **`egui` / `eframe`** and direct **Windows APIs** (`windows` crate), 
 
 ## Key Features
 
-1. **High-Performance Folder Size Analyzer & Interactive Tree View**:
+1. **Folder Size Professional 4-Quadrant Workspace Layout**:
+   - **Top Menu Bar**: Classic Windows menu bar with `File`, `Scan`, `Clean`, `View`, and `Help` menus with admin elevation badge and one-click relaunch.
+   - **Top-Left Quadrant**: Hierarchical folder tree view showing folder hierarchy and right-aligned cumulative sizes.
+   - **Top-Right Quadrant**: Detailed contents table with `Name`, `Size`, `Percent` visual progress bar, `Files`, `Folders`, `Attributes` (`D`, `A`, `RA`), and actions.
+   - **Bottom-Left Quadrant**: Logical Drives Overview table reporting `Drive`, `Total Size`, `Used Space`, `Free Space`, and `Usage %` using Win32 `GetDiskFreeSpaceExW`.
+   - **Bottom-Right Quadrant**: Interactive graphical Pie Chart with custom vector rendering, exploded slice on hover along its bisecting angle, pointer callout tooltip (`Name: XX.XX% (XX.XX MB)`), palette colors, legend, and `Pie` / `Bar Breakdown` view toggle.
+   - **Bottom Status Bar**: Displays real-time operational status (`Idle` / `Scanning: ...`), `X Files, Y Folders`, total size, and progress indicator.
+   - **Global Unit Selectors**: Toolbar unit toggles (`B`, `KB`, `MB`, `GB`, `AUTO`) that instantaneously update all size displays across the tree, tables, drives, and charts.
+
+2. **High-Performance Folder Size Analyzer & Interactive Tree View**:
    - **Hierarchical Folder Tree View**: Recursively analyzes and models every folder on any selected drive or directory into an interactive, expandable tree hierarchy (`▶` / `▼`).
    - **Proportional Size Bars**: Visual capacity bar for each directory node showing percentage allocation relative to parent or root.
    - **Detailed Folder Inspector**: Click any folder in the tree to inspect its immediate files, total subtree size, file counts, and trigger focused analysis or content cleanup.
-   - **Logical Drives Quick Bar**: Automatically detects available Windows drives (`C:\`, `D:\`, etc.) via Win32 `GetLogicalDrives` for instant root switching.
+   - **Logical Drives Quick Bar**: Automatically detects available Windows drives (`C:\`, `D:\`, etc.) via Win32 `GetLogicalDrives` and `GetDiskFreeSpaceExW` for instant root switching.
    - Recursive directory traversal calculating total size (Bytes, KB, MB, GB, TB).
    - Counts files, subdirectories, and inaccessible / access-denied entries.
    - Identifies Top 100 largest files and largest subdirectories with cumulative size.
@@ -21,7 +30,11 @@ Built with **`egui` / `eframe`** and direct **Windows APIs** (`windows` crate), 
    - Does not traverse symlinks or directory junctions by default.
    - Non-blocking background worker with cancellation support and real-time throttled UI updates.
 
-2. **Privilege & Elevation Management**:
+3. **Subsystem & Console Window Suppression**:
+   - Configured with `#![windows_subsystem = "windows"]` in `src/main.rs`.
+   - Configures the PE binary header to `IMAGE_SUBSYSTEM_WINDOWS_GUI`, completely eliminating the companion terminal/console window on startup.
+
+4. **Privilege & Elevation Management**:
    - Win32 Process Token Elevation detection (`OpenProcessToken` + `GetTokenInformation`).
    - One-click "Relaunch as Administrator" button using `ShellExecuteExW` with `runas`, preserving CLI arguments.
    - Prominent privilege badge in UI top navigation bar.

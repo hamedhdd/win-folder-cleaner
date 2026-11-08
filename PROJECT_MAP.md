@@ -23,9 +23,10 @@ win-folder-cleaner/
 │   └── ui/                          # Native desktop graphical user interface using egui & eframe
 │       ├── mod.rs                   # Re-exports UI views, theme, and application state
 │       ├── theme.rs                 # Unslop/Impeccable dark theme implementation (neutral ramp, quiet chrome, 4px grid)
-│       ├── app.rs                   # Main eframe::App loop, top navigation bar, background worker channel orchestration
+│       ├── app.rs                   # Main eframe::App loop, classic menu bar, status bar, background worker channel orchestration
+│       ├── chart_view.rs            # Interactive vector Pie Chart with hover callout tooltips, exploded slices, and bar breakdown
+│       ├── explorer_view.rs         # Pro 4-Quadrant view: Folder tree, contents table, logical drives table, interactive chart
 │       ├── dashboard_view.rs        # System overview, privilege badge, aggregated stat cards, and quick action shortcuts
-│       ├── explorer_view.rs         # Folder browser, sortable table, size breakdown, search filtering, and extension bars
 │       ├── cleaner_view.rs          # Multi-location temp selector, age threshold filter, takeown/icacls/clean buttons
 │       ├── logs_view.rs             # Operations audit log table, status filtering, RFC 4180 CSV export, and TXT export
 │       └── modals.rs                # Confirmation dialogs (delete confirmation with dry-run toggle, locked file inspector)
@@ -129,12 +130,26 @@ flowchart TD
 
 ## 5. Frontend & View Layout Catalog
 
+- **Classic Top Menu Bar (`pro_menu_bar`)**:
+  - `File`: Browse folder to scan, refresh logical drives, relaunch elevated, exit.
+  - `Scan`: Start scan, stop scan.
+  - `Clean`: Switch to Temp Cleaner suite.
+  - `View`: Folder Size Analyzer (Pro), Temp Cleaner, Operation Log, Dashboard.
+  - `Help`: About Folder Size Pro.
+  - `badge_privilege`: Shows `Elevated (Admin)` in green or `Standard User` in amber with relaunch action.
 - **Top Navigation Bar (`app_top_bar`)**:
-  - `tab_0`: **Dashboard** (System health, privilege level, aggregated metrics, quick links).
-  - `tab_1`: **Folder Explorer** (Interactive file explorer, sortable columns, largest subdirs, extension charts).
+  - `tab_1`: **Folder Size Analyzer (Pro)** (Default startup view matching Folder Size Professional 4-quadrant layout).
   - `tab_2`: **Temp Cleaner** (Multi-location checkboxes, age filter dropdown, administrative operations).
   - `tab_3`: **Operation Log** (Audited action table, search box, status dropdown, CSV/TXT export).
-  - `badge_privilege`: Shows `Elevated (Admin)` in green or `Standard User` in amber with relaunch action.
+  - `tab_0`: **Dashboard** (System health, privilege level, aggregated metrics, quick links).
+- **Pro 4-Quadrant View (`tab_1` - `explorer_view.rs`)**:
+  - **Toolbar**: Drive dropdown, path input, browse button, scan/stop, refresh, and size unit selectors (`B`, `KB`, `MB`, `GB`, `AUTO`).
+  - **Top-Left**: Directory tree view (`Folder` | `Size`) with recursive expander (`▶` / `▼`) and cumulative subtree sizes.
+  - **Top-Right**: Contents table (`Name`, `Size`, `Percent` progress bar, `Files`, `Folders`, `Attributes`, and contextual cleanup/inspect actions).
+  - **Bottom-Left**: Logical Drives table (`Drive`, `Total Size`, `Used Space`, `Free Space`, `Usage %`).
+  - **Bottom-Right**: Interactive vector Pie Chart (`chart_view.rs`) with exploded slice on hover, callout tooltips (`Name: XX.XX% (XX.XX MB)`), and toggle to Bar breakdown.
+- **Bottom Status Bar (`app_status_bar`)**:
+  - Real-time status (`Idle` / `Scanning: ...`), `X Files, Y Folders`, formatted total size, and progress indicator.
 - **Modals**:
   - `modal_delete_confirm`: Modal dialog with dry-run toggle, itemized file/size summary, and force-delete options.
   - `modal_locked_inspector`: Displays locking process name (e.g. `chrome.exe`, `explorer.exe`), PID, service name, and one-click "Schedule Delete on Reboot" trigger.
