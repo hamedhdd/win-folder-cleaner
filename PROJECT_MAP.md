@@ -5,7 +5,10 @@
 ```text
 win-folder-cleaner/
 ├── .cargo/config.toml               # MSVC static CRT configuration (+crt-static for portable single-binary execution)
-├── Cargo.toml                       # Project manifest with eframe (wgpu DirectX/WARP engine), windows, rayon, crossbeam-channel, rfd
+├── build.rs                         # Winres compilation script embedding Windows manifest and icon into PE binary
+├── app.manifest                     # XML application manifest (Per-Monitor V2 DPI, Long Path Support, Common Controls v6)
+├── assets/app_icon.ico              # Native multi-layer application icon
+├── Cargo.toml                       # Project manifest with eframe (wgpu DirectX/WARP engine), windows, rayon, crossbeam-channel, rfd, winres
 ├── README.md                        # User and developer documentation with build and usage instructions
 ├── CHANGELOG.md                     # Living changelog following Keep a Changelog conventions
 ├── PROJECT_MAP.md                   # This living architectural codebase map
@@ -16,6 +19,7 @@ win-folder-cleaner/
 │   │   ├── mod.rs                   # Re-exports core modules
 │   │   ├── types.rs                 # Central domain models (FileInfo, DirScanSummary, TempLocation, LogEntry, etc.)
 │   │   ├── security.rs              # Token elevation check, runas relauncher, protected system paths guard, ACL/takeown
+│   │   ├── shell.rs                 # Win32 shell integration: Recycle Bin soft-delete (SHFileOperationW), explorer, properties, default app
 │   │   ├── restart_mgr.rs           # Windows Restart Manager API integration for detecting file-locking processes
 │   │   ├── reboot_del.rs            # Win32 MoveFileExW wrapper with MOVEFILE_DELAY_UNTIL_REBOOT
 │   │   ├── temp_dirs.rs             # System & user temp location discovery (C:\Windows\Temp, %TEMP%, AppData, Profiles)
@@ -25,16 +29,16 @@ win-folder-cleaner/
 │       ├── mod.rs                   # Re-exports UI views, theme, and application state
 │       ├── theme.rs                 # Unslop/Impeccable dark theme implementation (neutral ramp, quiet chrome, 4px grid)
 │       ├── app.rs                   # Main eframe::App loop, classic menu bar, status bar, background worker channel orchestration
-│       ├── chart_view.rs            # Interactive vector Pie Chart with hover callout tooltips, exploded slices, and bar breakdown
-│       ├── explorer_view.rs         # Pro 4-Quadrant view: Folder tree, contents table, logical drives table, interactive chart
+│       ├── chart_view.rs            # Interactive Pie, Bar, and 2D squarified Treemap visualization with hover tooltips
+│       ├── explorer_view.rs         # Pro 4-Quadrant view: Folder tree, contents table with breadcrumbs & filters, logical drives, chart
 │       ├── dashboard_view.rs        # System overview, privilege badge, aggregated stat cards, and quick action shortcuts
 │       ├── cleaner_view.rs          # Multi-location temp selector, age threshold filter, takeown/icacls/clean buttons
 │       ├── logs_view.rs             # Operations audit log table, status filtering, RFC 4180 CSV export, and TXT export
-│       └── modals.rs                # Confirmation dialogs (delete confirmation with dry-run toggle, locked file inspector)
+│       └── modals.rs                # Confirmation dialogs (delete confirmation with Recycle Bin toggle & dry run, locked file inspector)
 └── tests/
     ├── path_validation_test.rs      # Unit tests for critical system path protection and traversal denial
     ├── scanner_test.rs              # Integration tests for recursive file scanner accuracy and cancellation tokens
-    └── cleaner_test.rs              # Integration tests for dry-run simulation, root folder retention, and readonly deletion
+    └── cleaner_test.rs              # Integration tests for dry-run simulation, root folder retention, readonly deletion, and Recycle Bin
 ```
 
 ---
@@ -90,6 +94,10 @@ flowchart TD
 | `grant_administrators_acl`| `core::security` | Elevated Admin | Executes `icacls "<path>" /grant *S-1-5-32-544:(OI)(CI)F /T /C` preserving other ACLs. |
 | `get_locking_processes` | `core::restart_mgr` | Any | Connects to Windows Restart Manager session to identify processes holding file locks. |
 | `schedule_deletion_on_reboot` | `core::reboot_del`| Elevated Admin | Registers path with `MoveFileExW` (`MOVEFILE_DELAY_UNTIL_REBOOT`) in Windows Session Manager. |
+| `move_to_recycle_bin` | `core::shell` | Standard / Elevated | Reversible safe deletion via Win32 `SHFileOperationW` (`FO_DELETE`, `FOF_ALLOWUNDO`). |
+| `reveal_in_explorer` | `core::shell` | Any | Spawns `explorer.exe /select,"<path>"` highlighting item in Windows Explorer. |
+| `open_with_default_app` | `core::shell` | Any | Invokes `ShellExecuteExW` with verb `open` launching registered default handler. |
+| `show_file_properties` | `core::shell` | Any | Invokes `ShellExecuteExW` with `SEE_MASK_INVOKEIDLIST` and verb `properties` opening native property sheet. |
 
 ---
 

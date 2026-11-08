@@ -10,12 +10,17 @@ Built with **`egui` / `eframe`** powered by **`wgpu` (DirectX 12 / DirectX 11 / 
 
 1. **Folder Size Professional 4-Quadrant Workspace Layout**:
    - **Top Menu Bar**: Classic Windows menu bar with `File`, `Scan`, `Clean`, `View`, and `Help` menus with admin elevation badge and one-click relaunch.
-   - **Top-Left Quadrant**: Hierarchical folder tree view showing folder hierarchy and right-aligned cumulative sizes.
-   - **Top-Right Quadrant**: Detailed contents table with `Name`, `Size`, `Percent` visual progress bar, `Files`, `Folders`, `Attributes` (`D`, `A`, `RA`), and actions.
+   - **Top-Left Quadrant**: Hierarchical folder tree view showing folder hierarchy, right-aligned cumulative sizes, and native right-click context menu.
+   - **Top-Right Quadrant**: Detailed contents table with clickable Breadcrumb navigation bar (`Path: C: › Windows › System32`), real-time search & size/type filter toolbar, right-click context actions, and proportional size progress bars.
    - **Bottom-Left Quadrant**: Logical Drives Overview table reporting `Drive`, `Total Size`, `Used Space`, `Free Space`, and `Usage %` using Win32 `GetDiskFreeSpaceExW`.
-   - **Bottom-Right Quadrant**: Interactive graphical Pie Chart with custom vector rendering, exploded slice on hover along its bisecting angle, pointer callout tooltip (`Name: XX.XX% (XX.XX MB)`), palette colors, legend, and `Pie` / `Bar Breakdown` view toggle.
+   - **Bottom-Right Quadrant**: Interactive graphical storage visualization with `Pie chart`, `Bar breakdown`, and 2D squarified proportional `Treemap` with hover callouts and category color palette.
    - **Bottom Status Bar**: Displays real-time operational status (`Idle` / `Scanning: ...`), `X Files, Y Folders`, total size, and progress indicator.
    - **Global Unit Selectors**: Toolbar unit toggles (`B`, `KB`, `MB`, `GB`, `AUTO`) that instantaneously update all size displays across the tree, tables, drives, and charts.
+
+2. **Windows Shell Integration & Safety Controls**:
+   - **Recycle Bin Safe Soft-Delete (`SHFileOperationW`)**: Delete items reversibly to the Windows Recycle Bin using native Win32 `SHFileOperationW` (`FO_DELETE | FOF_ALLOWUNDO`). Toggle between safe soft-delete and permanent removal in confirmation modals.
+   - **Native Right-Click Context Menus**: Right-click any tree folder, directory row, or file to access "Open in File Explorer", "Open with Default Application", "Copy Full Path", "Properties" (native Windows properties sheet), "Move to Recycle Bin", and "Inspect Locking Processes".
+   - **Embedded Windows Manifest & Application Icon (`winres`)**: Embedded PE manifest supporting Per-Monitor V2 DPI awareness, Long Path Support (`longPathAware`), Common Controls v6, and native multi-layer `.ico` icon.
 
 2. **High-Performance Level-Order & On-Demand Folder Analyzer**:
    - **High-Speed Pure NTFS Traversal (>100,000 files/sec)**: Eliminates synchronous handle opening syscalls in recursive loops, running at raw NTFS filesystem speeds to analyze massive folder structures (e.g. `C:\Windows`) in seconds.

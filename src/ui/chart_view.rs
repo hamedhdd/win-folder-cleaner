@@ -9,6 +9,7 @@ use crate::ui::theme::ThemeColors;
 pub enum ChartMode {
     Pie,
     Bar,
+    Treemap,
 }
 
 pub struct ChartItem {
@@ -50,6 +51,9 @@ pub fn render_pro_chart(
             if ui.selectable_label(*chart_mode == ChartMode::Bar, "Bar breakdown").clicked() {
                 *chart_mode = ChartMode::Bar;
             }
+            if ui.selectable_label(*chart_mode == ChartMode::Treemap, "Treemap").clicked() {
+                *chart_mode = ChartMode::Treemap;
+            }
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.label(
@@ -73,6 +77,7 @@ pub fn render_pro_chart(
         match chart_mode {
             ChartMode::Pie => render_pie_chart_canvas(ui, &items, unit),
             ChartMode::Bar => render_bar_breakdown(ui, &items, unit),
+            ChartMode::Treemap => render_treemap_canvas(ui, &items, unit),
         }
     });
 }
@@ -293,5 +298,158 @@ fn truncate_name(name: &str, max_len: usize) -> String {
         format!("{}...", name.chars().take(max_len).collect::<String>())
     } else {
         name.to_string()
+    }
+}
+
+// ------------------------------------------------------------------------------------------------
+// Interactive Treemap Canvas (SpaceSniffer / WinDirStat style)
+// ------------------------------------------------------------------------------------------------
+
+fn render_treemap_canvas(ui: &mut Ui, items: &[ChartItem], unit: SizeUnit) {
+    let avail_size = Vec2::new(ui.available_width(), (ui.available_height() - 8.0).max(180.0));
+    let (rect, response) = ui.allocate_exact_size(avail_size, Sense::hover());
+    let painter = ui.painter_at(rect);
+
+    // Frame
+    painter.rect_filled(rect, Rounding::same(4.0), ThemeColors::BG_CARD);
+    painter.rect_stroke(rect, Rounding::same(4.0), Stroke::new(1.0, ThemeColors::BORDER_QUIET));
+
+    let inner_rect = rect.shrink(6.0);
+    if items.is_empty() || inner_rect.width() <= 10.0 || inner_rect.height() <= 10.0 {
+        return;
+    }
+
+    let pointer_pos = response.hover_pos();
+    let total_bytes: u64 = items.iter().map(|it| it.bytes).sum();
+    if total_bytes == 0 {
+        return;
+    }
+
+    // Compute layout
+    let mut item_rects: Vec<Rect> = Vec::with_capacity(items.len());
+    layout_treemap_recursive(items, total_bytes, inner_rect, &mut item_rects);
+
+    let mut hovered_item: Option<(&ChartItem, Rect)> = None;
+
+    for (item, item_rect) in items.iter().zip(item_rects.iter()) {
+        if item_rect.width() < 1.0 || item_rect.height() < 1.0 {
+            continue;
+        }
+
+        let is_hovered = pointer_pos.map_or(false, |pos| item_rect.contains(pos));
+        if is_hovered {
+            hovered_item = Some((item, *item_rect));
+        }
+
+        let fill_color = if is_hovered {
+            lighten_color(item.color)
+        } else {
+            item.color
+        };
+
+        painter.rect_filled(*item_rect, Rounding::same(2.0), fill_color);
+        painter.rect_stroke(
+            *item_rect,
+            Rounding::same(2.0),
+            Stroke::new(1.0, Color32::from_black_alpha(100)),
+        );
+
+        // Draw label if rectangle is large enough
+        if item_rect.width() >= 55.0 && item_rect.height() >= 18.0 {
+            let label = if item_rect.width() >= 100.0 && item_rect.height() >= 34.0 {
+                format!("{}\n{}", truncate_name(&item.name, 16), unit.format(item.bytes))
+            } else {
+                truncate_name(&item.name, 12)
+            };
+
+            let text_pos = Pos2::new(item_rect.min.x + 4.0, item_rect.min.y + 4.0);
+            painter.text(
+                text_pos,
+                egui::Align2::LEFT_TOP,
+                label,
+                egui::FontId::proportional(11.0),
+                ThemeColors::TEXT_PRIMARY,
+            );
+        }
+    }
+
+    // Draw hover tooltip
+    if let Some((item, item_rect)) = hovered_item {
+        painter.rect_stroke(item_rect, Rounding::same(2.0), Stroke::new(2.0, ThemeColors::ACCENT));
+
+        if let Some(pos) = pointer_pos {
+            let callout_text = format!("{}: {} ({:.1}%)", item.name, unit.format(item.bytes), item.percentage);
+            let text_len = callout_text.len();
+            let box_width = (text_len as f32 * 7.2).max(120.0);
+            let callout_x = (pos.x + 12.0).min(rect.max.x - box_width - 8.0);
+            let callout_y = (pos.y - 28.0).max(rect.min.y + 4.0);
+            let callout_rect = Rect::from_min_size(
+                Pos2::new(callout_x, callout_y),
+                Vec2::new(box_width, 24.0),
+            );
+
+            painter.rect_filled(callout_rect, Rounding::same(4.0), Color32::from_rgba_premultiplied(15, 23, 42, 235));
+            painter.rect_stroke(callout_rect, Rounding::same(4.0), Stroke::new(1.0, ThemeColors::ACCENT));
+            painter.text(
+                Pos2::new(callout_rect.min.x + 8.0, callout_rect.min.y + 4.0),
+                egui::Align2::LEFT_TOP,
+                callout_text,
+                egui::FontId::proportional(11.0),
+                ThemeColors::TEXT_PRIMARY,
+            );
+        }
+    }
+}
+
+fn layout_treemap_recursive(
+    items: &[ChartItem],
+    total_bytes: u64,
+    rect: Rect,
+    out: &mut Vec<Rect>,
+) {
+    if items.is_empty() {
+        return;
+    }
+    if items.len() == 1 {
+        out.push(rect);
+        return;
+    }
+
+    let half_bytes = total_bytes / 2;
+    let mut acc = 0u64;
+    let mut split_idx = 1;
+    for (i, it) in items.iter().enumerate() {
+        acc += it.bytes;
+        if acc >= half_bytes && i > 0 {
+            split_idx = i;
+            break;
+        }
+    }
+
+    let left_items = &items[..split_idx];
+    let right_items = &items[split_idx..];
+    let left_bytes: u64 = left_items.iter().map(|it| it.bytes).sum();
+    let right_bytes: u64 = right_items.iter().map(|it| it.bytes).sum();
+
+    let frac = if total_bytes > 0 {
+        (left_bytes as f32 / total_bytes as f32).clamp(0.05, 0.95)
+    } else {
+        0.5
+    };
+
+    if rect.width() >= rect.height() {
+        let split_x = rect.min.x + rect.width() * frac;
+        let left_rect = Rect::from_min_max(rect.min, Pos2::new(split_x, rect.max.y)).shrink(1.0);
+        let right_rect = Rect::from_min_max(Pos2::new(split_x, rect.min.y), rect.max).shrink(1.0);
+
+        layout_treemap_recursive(left_items, left_bytes, left_rect, out);
+        layout_treemap_recursive(right_items, right_bytes, right_rect, out);
+    } else {
+        let split_y = rect.min.y + rect.height() * frac;
+        let top_rect = Rect::from_min_max(rect.min, Pos2::new(rect.max.x, split_y)).shrink(1.0);
+        let bottom_rect = Rect::from_min_max(Pos2::new(rect.min.x, split_y), rect.max).shrink(1.0);
+
+        layout_treemap_recursive(left_items, left_bytes, top_rect, out);
+        layout_treemap_recursive(right_items, right_bytes, bottom_rect, out);
     }
 }

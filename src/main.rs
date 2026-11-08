@@ -91,8 +91,8 @@ fn main() {
             Error Details:\n\
             {}\n\n\
             Common Causes:\n\
-            1. Graphics Driver: Missing OpenGL 2.0+ or DirectX 11 hardware acceleration.\n\
-            2. Remote Desktop (RDP) / Virtual Machine: OpenGL is disabled by default in standard RDP sessions and unaccelerated VMs.\n\
+            1. Graphics Driver: Missing DirectX 12, DirectX 11, or Vulkan hardware driver.\n\
+            2. Remote Desktop (RDP) / Virtual Machine: Graphics hardware acceleration may be disabled; enable RemoteFX or WARP rasterizer.\n\
             3. Microsoft Basic Display Adapter: Standard VGA fallback driver is active.\n\n\
             Diagnostic log saved to:\n\
             %TEMP%\\win_folder_cleaner_crash.log",

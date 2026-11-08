@@ -103,3 +103,45 @@ fn test_readonly_file_is_removed() {
 
     let _ = fs::remove_dir_all(&test_dir);
 }
+
+#[test]
+fn test_move_to_recycle_bin() {
+    let test_dir = std::env::temp_dir().join("test_win_folder_cleaner_recycle_bin");
+    let _ = fs::remove_dir_all(&test_dir);
+    fs::create_dir_all(&test_dir).expect("create test_dir");
+
+    let sample_file = test_dir.join("recycle_me.txt");
+    {
+        let mut f = File::create(&sample_file).expect("create file");
+        f.write_all(b"send to recycle bin").expect("write bytes");
+    }
+    assert!(sample_file.exists());
+
+    let res = win_folder_cleaner::core::shell::move_to_recycle_bin(&sample_file);
+    assert!(res.is_ok(), "move_to_recycle_bin should succeed");
+    assert!(!sample_file.exists(), "File should no longer be at original location");
+
+    let _ = fs::remove_dir_all(&test_dir);
+}
+
+#[test]
+fn test_move_folder_to_recycle_bin() {
+    let test_dir = std::env::temp_dir().join("test_win_folder_cleaner_recycle_folder");
+    let _ = fs::remove_dir_all(&test_dir);
+    fs::create_dir_all(&test_dir).expect("create test_dir");
+
+    let sub_folder = test_dir.join("sub_folder");
+    fs::create_dir_all(&sub_folder).expect("create sub_folder");
+    let sample_file = sub_folder.join("nested.txt");
+    {
+        let mut f = File::create(&sample_file).expect("create file");
+        f.write_all(b"nested recycle").expect("write bytes");
+    }
+    assert!(sub_folder.exists());
+
+    let res = win_folder_cleaner::core::shell::move_to_recycle_bin(&sub_folder);
+    assert!(res.is_ok(), "moving folder to recycle bin should succeed");
+    assert!(!sub_folder.exists(), "Folder should no longer be at original location");
+
+    let _ = fs::remove_dir_all(&test_dir);
+}

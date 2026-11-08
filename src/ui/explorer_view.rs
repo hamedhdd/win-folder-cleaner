@@ -1,6 +1,5 @@
 use std::collections::HashSet;
-use std::path::PathBuf;
-use std::process::Command;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use crossbeam_channel::{Receiver, Sender};
@@ -16,6 +15,13 @@ use crate::core::types::{
 use crate::ui::chart_view::{render_pro_chart, ChartMode};
 use crate::ui::theme::ThemeColors;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ItemTypeFilter {
+    All,
+    FoldersOnly,
+    FilesOnly,
+}
+
 pub struct ExplorerViewState {
     pub selected_path: String,
     pub available_drives: Vec<DriveSpaceInfo>,
@@ -26,6 +32,8 @@ pub struct ExplorerViewState {
     pub expanded_paths: HashSet<PathBuf>,
     pub selected_node: Option<FolderTreeNode>,
     pub search_query: String,
+    pub min_size_filter: u64,
+    pub type_filter: ItemTypeFilter,
     pub sort_column: SortColumn,
     pub sort_direction: SortDirection,
     pub pending_expansions: HashSet<PathBuf>,
@@ -52,6 +60,8 @@ impl Default for ExplorerViewState {
             expanded_paths: HashSet::new(),
             selected_node: None,
             search_query: String::new(),
+            min_size_filter: 0,
+            type_filter: ItemTypeFilter::All,
             sort_column: SortColumn::Size,
             sort_direction: SortDirection::Descending,
             pending_expansions: HashSet::new(),
@@ -425,6 +435,31 @@ fn render_tree_recursive_row(
                 });
             }
         }
+        label.context_menu(|ui| {
+            ui.label(RichText::new(&node.name).strong().color(ThemeColors::TEXT_PRIMARY));
+            ui.separator();
+            if ui.button("Open in File Explorer").clicked() {
+                let _ = crate::core::shell::reveal_in_explorer(&node.path);
+                ui.close_menu();
+            }
+            if ui.button("Open with Default Application").clicked() {
+                let _ = crate::core::shell::open_with_default_app(&node.path);
+                ui.close_menu();
+            }
+            if ui.button("Copy Full Path").clicked() {
+                ui.output_mut(|o| o.copied_text = node.path.to_string_lossy().to_string());
+                ui.close_menu();
+            }
+            if ui.button("Properties").clicked() {
+                let _ = crate::core::shell::show_file_properties(&node.path);
+                ui.close_menu();
+            }
+            ui.separator();
+            if ui.button(RichText::new("Move to Recycle Bin").color(ThemeColors::STATUS_SUCCESS)).clicked() {
+                let _ = crate::core::shell::move_to_recycle_bin(&node.path);
+                ui.close_menu();
+            }
+        });
 
         // Real-time asynchronous scanning indicator badge
         if is_pending {
@@ -473,6 +508,18 @@ fn render_tree_recursive_row(
 // 3. Top-Right: Contents Detailed List Table
 // ------------------------------------------------------------------------------------------------
 
+fn find_node_in_tree<'a>(root: &'a FolderTreeNode, target: &Path) -> Option<&'a FolderTreeNode> {
+    if root.path == target {
+        return Some(root);
+    }
+    for child in &root.children {
+        if let Some(found) = find_node_in_tree(child, target) {
+            return Some(found);
+        }
+    }
+    None
+}
+
 fn render_top_right_contents_table(
     ui: &mut Ui,
     state: &mut ExplorerViewState,
@@ -487,25 +534,127 @@ fn render_top_right_contents_table(
         .inner_margin(Margin::same(8.0))
         .show(ui, |ui| {
             let unit = state.selected_unit;
+            let mut navigate_to_path: Option<PathBuf> = None;
 
             if let Some(node) = &mut state.selected_node {
                 if node.direct_files.is_empty() && node.immediate_files_size > 0 {
                     node.direct_files = crate::core::analyzer::load_directory_files(&node.path);
                 }
 
-                // Header with breadcrumb and actions
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new(&node.name).strong().color(ThemeColors::TEXT_PRIMARY));
-                    ui.label(RichText::new(format!("({})", unit.format(node.total_size))).color(ThemeColors::ACCENT));
+                // 1. Clickable Breadcrumb Bar
+                let mut breadcrumbs: Vec<PathBuf> = Vec::new();
+                {
+                    let mut cur: Option<&Path> = Some(&node.path);
+                    while let Some(p) = cur {
+                        breadcrumbs.push(p.to_path_buf());
+                        cur = p.parent();
+                    }
+                    breadcrumbs.reverse();
+                }
+
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(RichText::new("Path:").color(ThemeColors::TEXT_MUTED));
+                    let last_idx = breadcrumbs.len().saturating_sub(1);
+                    for (i, p) in breadcrumbs.iter().enumerate() {
+                        let is_last = i == last_idx;
+                        let seg_name = if p.parent().is_none() {
+                            p.to_string_lossy().to_string()
+                        } else {
+                            p.file_name()
+                                .map(|f| f.to_string_lossy().to_string())
+                                .unwrap_or_else(|| p.to_string_lossy().to_string())
+                        };
+
+                        if is_last {
+                            ui.label(RichText::new(&seg_name).strong().color(ThemeColors::TEXT_PRIMARY));
+                        } else {
+                            if ui.link(RichText::new(&seg_name).color(ThemeColors::ACCENT)).clicked() {
+                                navigate_to_path = Some(p.clone());
+                            }
+                            ui.label(RichText::new("›").color(ThemeColors::TEXT_MUTED));
+                        }
+                    }
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui.small_button(RichText::new("Clean contents").color(ThemeColors::STATUS_ERROR)).clicked() {
                             on_clean_folder_contents(&node.path);
                         }
+                        if ui.small_button("Properties").clicked() {
+                            let _ = crate::core::shell::show_file_properties(&node.path);
+                        }
                         if ui.small_button("Open in Explorer").clicked() {
-                            let _ = Command::new("explorer.exe").arg(node.path.to_string_lossy().to_string()).spawn();
+                            let _ = crate::core::shell::reveal_in_explorer(&node.path);
                         }
                     });
+                });
+
+                // 2. Search & Filter Bar (Live search, min size filter, item type filter)
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("Search:").color(ThemeColors::TEXT_MUTED));
+                    ui.add(
+                        egui::TextEdit::singleline(&mut state.search_query)
+                            .desired_width(120.0)
+                            .hint_text("Filter by name..."),
+                    );
+                    if !state.search_query.is_empty() {
+                        if ui.small_button("✕").clicked() {
+                            state.search_query.clear();
+                        }
+                    }
+
+                    ui.separator();
+
+                    ui.label(RichText::new("Min Size:").color(ThemeColors::TEXT_MUTED));
+                    let size_label = match state.min_size_filter {
+                        0 => "All sizes",
+                        1_048_576 => "> 1 MB",
+                        10_485_760 => "> 10 MB",
+                        104_857_600 => "> 100 MB",
+                        1_073_741_824 => "> 1 GB",
+                        _ => "Custom",
+                    };
+                    ComboBox::from_id_salt("contents_size_filter_combo")
+                        .selected_text(size_label)
+                        .show_ui(ui, |ui| {
+                            if ui.selectable_label(state.min_size_filter == 0, "All sizes").clicked() {
+                                state.min_size_filter = 0;
+                            }
+                            if ui.selectable_label(state.min_size_filter == 1_048_576, "> 1 MB").clicked() {
+                                state.min_size_filter = 1_048_576;
+                            }
+                            if ui.selectable_label(state.min_size_filter == 10_485_760, "> 10 MB").clicked() {
+                                state.min_size_filter = 10_485_760;
+                            }
+                            if ui.selectable_label(state.min_size_filter == 104_857_600, "> 100 MB").clicked() {
+                                state.min_size_filter = 104_857_600;
+                            }
+                            if ui.selectable_label(state.min_size_filter == 1_073_741_824, "> 1 GB").clicked() {
+                                state.min_size_filter = 1_073_741_824;
+                            }
+                        });
+
+                    ui.separator();
+
+                    ui.label(RichText::new("Type:").color(ThemeColors::TEXT_MUTED));
+                    let type_label = match state.type_filter {
+                        ItemTypeFilter::All => "All items",
+                        ItemTypeFilter::FoldersOnly => "Folders only",
+                        ItemTypeFilter::FilesOnly => "Files only",
+                    };
+                    ComboBox::from_id_salt("contents_type_filter_combo")
+                        .selected_text(type_label)
+                        .show_ui(ui, |ui| {
+                            if ui.selectable_label(state.type_filter == ItemTypeFilter::All, "All items").clicked() {
+                                state.type_filter = ItemTypeFilter::All;
+                            }
+                            if ui.selectable_label(state.type_filter == ItemTypeFilter::FoldersOnly, "Folders only").clicked() {
+                                state.type_filter = ItemTypeFilter::FoldersOnly;
+                            }
+                            if ui.selectable_label(state.type_filter == ItemTypeFilter::FilesOnly, "Files only").clicked() {
+                                state.type_filter = ItemTypeFilter::FilesOnly;
+                            }
+                        });
                 });
 
                 ui.separator();
@@ -520,9 +669,13 @@ fn render_top_right_contents_table(
                     return;
                 }
 
-                // Detailed Table
+                // 3. Detailed Contents Table with Context Menus & Filters
                 let total_parent_size = node.total_size.max(1);
                 let contents_max_h = (ui.available_height() - 4.0).max(60.0);
+                let query = state.search_query.trim().to_lowercase();
+                let min_size = state.min_size_filter;
+                let show_folders = state.type_filter != ItemTypeFilter::FilesOnly;
+                let show_files = state.type_filter != ItemTypeFilter::FoldersOnly;
 
                 ScrollArea::vertical()
                     .id_salt("pro_contents_scroll_panel")
@@ -544,62 +697,152 @@ fn render_top_right_contents_table(
                             ui.end_row();
 
                             // Subdirectories rows
-                            for child in &node.children {
-                                let pct = (child.total_size as f32 / total_parent_size as f32) * 100.0;
-
-                                ui.horizontal(|ui| {
-                                    ui.label(RichText::new("dir").color(ThemeColors::STATUS_INFO).size(10.0));
-                                    ui.label(RichText::new(&child.name).color(ThemeColors::TEXT_PRIMARY));
-                                });
-
-                                ui.label(RichText::new(unit.format(child.total_size)).color(ThemeColors::TEXT_PRIMARY));
-
-                                ui.horizontal(|ui| {
-                                    ui.label(RichText::new(format!("{:.1}%", pct)).color(ThemeColors::TEXT_SECONDARY));
-                                    ui.add(ProgressBar::new(pct / 100.0).desired_width(45.0));
-                                });
-
-                                ui.label(RichText::new(format!("{}", child.file_count)).color(ThemeColors::TEXT_MUTED));
-                                ui.label(RichText::new(format!("{}", child.dir_count)).color(ThemeColors::TEXT_MUTED));
-                                ui.label(RichText::new("D").color(ThemeColors::TEXT_MUTED));
-
-                                ui.horizontal(|ui| {
-                                    if ui.small_button("Clean").clicked() {
-                                        on_clean_folder_contents(&child.path);
+                            if show_folders {
+                                for child in &node.children {
+                                    if child.total_size < min_size {
+                                        continue;
                                     }
-                                });
-                                ui.end_row();
+                                    if !query.is_empty() && !child.name.to_lowercase().contains(&query) {
+                                        continue;
+                                    }
+
+                                    let pct = (child.total_size as f32 / total_parent_size as f32) * 100.0;
+
+                                    let dir_label = ui.horizontal(|ui| {
+                                        ui.label(RichText::new("dir").color(ThemeColors::STATUS_INFO).size(10.0));
+                                        ui.selectable_label(false, RichText::new(&child.name).color(ThemeColors::TEXT_PRIMARY))
+                                    }).inner;
+
+                                    if dir_label.double_clicked() {
+                                        navigate_to_path = Some(child.path.clone());
+                                    }
+
+                                    dir_label.context_menu(|ui| {
+                                        ui.label(RichText::new(&child.name).strong().color(ThemeColors::TEXT_PRIMARY));
+                                        ui.separator();
+                                        if ui.button("Open in File Explorer").clicked() {
+                                            let _ = crate::core::shell::reveal_in_explorer(&child.path);
+                                            ui.close_menu();
+                                        }
+                                        if ui.button("Open with Default Application").clicked() {
+                                            let _ = crate::core::shell::open_with_default_app(&child.path);
+                                            ui.close_menu();
+                                        }
+                                        if ui.button("Copy Full Path").clicked() {
+                                            ui.output_mut(|o| o.copied_text = child.path.to_string_lossy().to_string());
+                                            ui.close_menu();
+                                        }
+                                        if ui.button("Properties").clicked() {
+                                            let _ = crate::core::shell::show_file_properties(&child.path);
+                                            ui.close_menu();
+                                        }
+                                        ui.separator();
+                                        if ui.button(RichText::new("Move to Recycle Bin").color(ThemeColors::STATUS_SUCCESS)).clicked() {
+                                            let _ = crate::core::shell::move_to_recycle_bin(&child.path);
+                                            ui.close_menu();
+                                        }
+                                        if ui.button(RichText::new("Clean Folder Contents...").color(ThemeColors::STATUS_ERROR)).clicked() {
+                                            on_clean_folder_contents(&child.path);
+                                            ui.close_menu();
+                                        }
+                                    });
+
+                                    ui.label(RichText::new(unit.format(child.total_size)).color(ThemeColors::TEXT_PRIMARY));
+
+                                    ui.horizontal(|ui| {
+                                        ui.label(RichText::new(format!("{:.1}%", pct)).color(ThemeColors::TEXT_SECONDARY));
+                                        ui.add(ProgressBar::new(pct / 100.0).desired_width(45.0));
+                                    });
+
+                                    ui.label(RichText::new(format!("{}", child.file_count)).color(ThemeColors::TEXT_MUTED));
+                                    ui.label(RichText::new(format!("{}", child.dir_count)).color(ThemeColors::TEXT_MUTED));
+                                    ui.label(RichText::new("D").color(ThemeColors::TEXT_MUTED));
+
+                                    ui.horizontal(|ui| {
+                                        if ui.small_button("Clean").clicked() {
+                                            on_clean_folder_contents(&child.path);
+                                        }
+                                    });
+                                    ui.end_row();
+                                }
                             }
 
                             // Direct files rows
-                            for file in &node.direct_files {
-                                let pct = (file.size as f32 / total_parent_size as f32) * 100.0;
-
-                                ui.horizontal(|ui| {
-                                    ui.label(RichText::new("file").color(ThemeColors::TEXT_MUTED).size(10.0));
-                                    ui.label(RichText::new(&file.name).color(ThemeColors::TEXT_PRIMARY));
-                                });
-
-                                ui.label(RichText::new(unit.format(file.size)).color(ThemeColors::TEXT_SECONDARY));
-
-                                ui.horizontal(|ui| {
-                                    ui.label(RichText::new(format!("{:.1}%", pct)).color(ThemeColors::TEXT_MUTED));
-                                    ui.add(ProgressBar::new(pct / 100.0).desired_width(45.0));
-                                });
-
-                                ui.label(RichText::new("-").color(ThemeColors::TEXT_MUTED));
-                                ui.label(RichText::new("-").color(ThemeColors::TEXT_MUTED));
-                                ui.label(RichText::new(if file.is_readonly { "RA" } else { "A" }).color(ThemeColors::TEXT_MUTED));
-
-                                ui.horizontal(|ui| {
-                                    if ui.small_button("Inspect").clicked() {
-                                        on_inspect_file(file);
+                            if show_files {
+                                for file in &node.direct_files {
+                                    if file.size < min_size {
+                                        continue;
                                     }
-                                    if ui.small_button(RichText::new("Delete").color(ThemeColors::STATUS_ERROR)).clicked() {
-                                        on_delete_single_file(file);
+                                    if !query.is_empty() && !file.name.to_lowercase().contains(&query) {
+                                        continue;
                                     }
-                                });
-                                ui.end_row();
+
+                                    let pct = (file.size as f32 / total_parent_size as f32) * 100.0;
+
+                                    let file_label = ui.horizontal(|ui| {
+                                        ui.label(RichText::new("file").color(ThemeColors::TEXT_MUTED).size(10.0));
+                                        ui.selectable_label(false, RichText::new(&file.name).color(ThemeColors::TEXT_PRIMARY))
+                                    }).inner;
+
+                                    if file_label.double_clicked() {
+                                        let _ = crate::core::shell::open_with_default_app(&file.path);
+                                    }
+
+                                    file_label.context_menu(|ui| {
+                                        ui.label(RichText::new(&file.name).strong().color(ThemeColors::TEXT_PRIMARY));
+                                        ui.separator();
+                                        if ui.button("Open in File Explorer").clicked() {
+                                            let _ = crate::core::shell::reveal_in_explorer(&file.path);
+                                            ui.close_menu();
+                                        }
+                                        if ui.button("Open with Default Application").clicked() {
+                                            let _ = crate::core::shell::open_with_default_app(&file.path);
+                                            ui.close_menu();
+                                        }
+                                        if ui.button("Copy Full Path").clicked() {
+                                            ui.output_mut(|o| o.copied_text = file.path.to_string_lossy().to_string());
+                                            ui.close_menu();
+                                        }
+                                        if ui.button("Properties").clicked() {
+                                            let _ = crate::core::shell::show_file_properties(&file.path);
+                                            ui.close_menu();
+                                        }
+                                        ui.separator();
+                                        if ui.button("Inspect Locking Processes").clicked() {
+                                            on_inspect_file(file);
+                                            ui.close_menu();
+                                        }
+                                        if ui.button(RichText::new("Move to Recycle Bin").color(ThemeColors::STATUS_SUCCESS)).clicked() {
+                                            let _ = crate::core::shell::move_to_recycle_bin(&file.path);
+                                            ui.close_menu();
+                                        }
+                                        if ui.button(RichText::new("Delete File...").color(ThemeColors::STATUS_ERROR)).clicked() {
+                                            on_delete_single_file(file);
+                                            ui.close_menu();
+                                        }
+                                    });
+
+                                    ui.label(RichText::new(unit.format(file.size)).color(ThemeColors::TEXT_SECONDARY));
+
+                                    ui.horizontal(|ui| {
+                                        ui.label(RichText::new(format!("{:.1}%", pct)).color(ThemeColors::TEXT_MUTED));
+                                        ui.add(ProgressBar::new(pct / 100.0).desired_width(45.0));
+                                    });
+
+                                    ui.label(RichText::new("-").color(ThemeColors::TEXT_MUTED));
+                                    ui.label(RichText::new("-").color(ThemeColors::TEXT_MUTED));
+                                    ui.label(RichText::new(if file.is_readonly { "RA" } else { "A" }).color(ThemeColors::TEXT_MUTED));
+
+                                    ui.horizontal(|ui| {
+                                        if ui.small_button("Inspect").clicked() {
+                                            on_inspect_file(file);
+                                        }
+                                        if ui.small_button(RichText::new("Delete").color(ThemeColors::STATUS_ERROR)).clicked() {
+                                            on_delete_single_file(file);
+                                        }
+                                    });
+                                    ui.end_row();
+                                }
                             }
                         });
                 });
@@ -608,6 +851,33 @@ fn render_top_right_contents_table(
                     ui.add_space(30.0);
                     ui.label(RichText::new("Select a folder in the tree to view its contents.").color(ThemeColors::TEXT_MUTED));
                 });
+            }
+
+            // Handle breadcrumb or double-click navigation
+            if let Some(target_path) = navigate_to_path {
+                let mut target_node = None;
+                if let Some(summary) = &state.scan_summary {
+                    if let Some(root) = &summary.root_tree {
+                        if let Some(found) = find_node_in_tree(root, &target_path) {
+                            target_node = Some(found.clone());
+                        }
+                    }
+                }
+                if target_node.is_none() {
+                    let name = target_path
+                        .file_name()
+                        .map(|f| f.to_string_lossy().to_string())
+                        .unwrap_or_else(|| target_path.to_string_lossy().to_string());
+                    let mut node = FolderTreeNode::new(target_path.clone(), name);
+                    node.direct_files = crate::core::analyzer::load_directory_files(&target_path);
+                    target_node = Some(node);
+                }
+                if let Some(mut node) = target_node {
+                    if node.direct_files.is_empty() && node.immediate_files_size > 0 {
+                        node.direct_files = crate::core::analyzer::load_directory_files(&node.path);
+                    }
+                    state.selected_node = Some(node);
+                }
             }
         });
 }

@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.4] - 2026-11-08
+
+### Added
+- **Recycle Bin Safe Soft-Delete (`SHFileOperationW`)**:
+  - Implemented reversible file and directory deletion via native Win32 `SHFileOperationW` with `FO_DELETE`, `FOF_ALLOWUNDO`, `FOF_NOCONFIRMATION`, and `FOF_SILENT` in `src/core/shell.rs`.
+  - Added "Move to Recycle Bin" toggle to the confirmation modal (default enabled) preventing accidental unrecoverable data loss.
+  - Added unit and integration tests (`test_move_to_recycle_bin` and `test_move_folder_to_recycle_bin`) in `tests/cleaner_test.rs`.
+- **Native Right-Click Context Menus**:
+  - Attached contextual right-click actions to all tree view rows, directory rows, and contents table file rows.
+  - Context menu actions include: "Open in File Explorer" (`reveal_in_explorer`), "Open with Default Application" (`open_with_default_app`), "Copy Full Path", "Properties" (`show_file_properties`), "Move to Recycle Bin", and "Inspect Locking Processes".
+- **Interactive Treemap SpaceSniffer-Style Visualization View**:
+  - Added a squarified proportional 2D Treemap visualizer to the bottom-right quadrant with recursive bisection partitioning.
+  - Includes real-time hover highlight frames, bounded labels with byte footprint, and floating callout tooltips.
+- **Clickable Breadcrumb Navigation Bar**:
+  - Added interactive breadcrumb path bar (`Path: C: › Windows › System32`) above the contents table.
+  - Clicking any ancestor breadcrumb instantly jumps and focuses navigation to that parent directory.
+- **Contents Table Multi-Filter Toolbar**:
+  - Added live substring search (`Filter by name...` with clear button `✕`).
+  - Added minimum size threshold filter (`All sizes`, `> 1 MB`, `> 10 MB`, `> 100 MB`, `> 1 GB`).
+  - Added item type filter (`All items`, `Folders only`, `Files only`).
+- **Embedded Windows Manifest & Application Icon (`winres`)**:
+  - Created `app.manifest` providing Per-Monitor V2 DPI awareness (`PerMonitorV2`), Long Path Support (`<longPathAware>true</longPathAware>`), and Common Controls v6.
+  - Embedded high-resolution native `.ico` icon (`assets/app_icon.ico`) into the portable executable PE resource section via `build.rs` and `winres`.
+
 ## [0.9.3] - 2026-11-08
 
 ### Fixed

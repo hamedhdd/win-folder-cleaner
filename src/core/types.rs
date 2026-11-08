@@ -128,6 +128,24 @@ pub struct NodeScanResult {
 }
 
 impl FolderTreeNode {
+    pub fn new(path: PathBuf, name: String) -> Self {
+        Self {
+            path,
+            name,
+            total_size: 0,
+            immediate_files_size: 0,
+            file_count: 0,
+            dir_count: 0,
+            children: Vec::new(),
+            direct_files: Vec::new(),
+            is_inaccessible: false,
+            is_deeper_scanned: false,
+            inaccessible_count: 0,
+            is_scanning: false,
+            size_on_disk: None,
+        }
+    }
+
     pub fn formatted_size(&self) -> String {
         format_bytes(self.total_size)
     }

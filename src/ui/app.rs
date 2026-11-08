@@ -653,6 +653,7 @@ impl eframe::App for WinFolderCleanerApp {
                                 total_files: 0,
                                 total_dirs: 0,
                                 total_bytes: 0,
+                                use_recycle_bin: true,
                                 is_dry_run: false,
                                 force_ownership_and_acl: false,
                                 schedule_reboot_if_locked: false,
@@ -682,6 +683,7 @@ impl eframe::App for WinFolderCleanerApp {
                                 total_files: 1,
                                 total_dirs: 0,
                                 total_bytes: file.size,
+                                use_recycle_bin: true,
                                 is_dry_run: false,
                                 force_ownership_and_acl: false,
                                 schedule_reboot_if_locked: false,
@@ -784,6 +786,7 @@ impl eframe::App for WinFolderCleanerApp {
                                 total_files,
                                 total_dirs,
                                 total_bytes,
+                                use_recycle_bin: false,
                                 is_dry_run: dry_run,
                                 force_ownership_and_acl: false,
                                 schedule_reboot_if_locked: false,
@@ -819,15 +822,55 @@ impl eframe::App for WinFolderCleanerApp {
         show_delete_confirmation_modal(
             ctx,
             &mut self.delete_modal,
-            |dry_run, force, reboot| {
-                trigger_delete = Some((dry_run, force, reboot));
+            |dry_run, force, reboot, use_recycle_bin| {
+                trigger_delete = Some((dry_run, force, reboot, use_recycle_bin));
             },
         );
 
-        if let Some((dry_run, force, reboot)) = trigger_delete {
+        if let Some((dry_run, force, reboot, use_recycle_bin)) = trigger_delete {
             let paths = self.delete_modal.target_paths.clone();
-            let age_filter = self.cleaner_state.selected_age_filter;
-            self.execute_clean_pipeline(paths, age_filter, dry_run, force, reboot);
+            if use_recycle_bin {
+                for path in &paths {
+                    if dry_run {
+                        self.logs.push(LogEntry {
+                            timestamp: chrono::Local::now(),
+                            target_path: path.to_string_lossy().to_string(),
+                            action: "Simulate Soft Delete".to_string(),
+                            status: LogStatus::DryRun,
+                            details: "Dry-run: Would move item safely to Windows Recycle Bin.".to_string(),
+                        });
+                    } else {
+                        match crate::core::shell::move_to_recycle_bin(path) {
+                            Ok(_) => {
+                                self.logs.push(LogEntry {
+                                    timestamp: chrono::Local::now(),
+                                    target_path: path.to_string_lossy().to_string(),
+                                    action: "Recycle Bin Soft Delete".to_string(),
+                                    status: LogStatus::Success,
+                                    details: "Successfully moved to Windows Recycle Bin (reversible).".to_string(),
+                                });
+                            }
+                            Err(e) => {
+                                self.logs.push(LogEntry {
+                                    timestamp: chrono::Local::now(),
+                                    target_path: path.to_string_lossy().to_string(),
+                                    action: "Recycle Bin Soft Delete".to_string(),
+                                    status: LogStatus::Error,
+                                    details: e,
+                                });
+                            }
+                        }
+                    }
+                }
+                // Refresh active explorer selection or directory if applicable
+                if let Some(node) = &mut self.explorer_state.selected_node {
+                    let p = node.path.clone();
+                    node.direct_files = crate::core::analyzer::load_directory_files(&p);
+                }
+            } else {
+                let age_filter = self.cleaner_state.selected_age_filter;
+                self.execute_clean_pipeline(paths, age_filter, dry_run, force, reboot);
+            }
         }
 
         let mut trigger_schedule_reboot = None;

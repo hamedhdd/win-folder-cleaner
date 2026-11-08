@@ -4,7 +4,7 @@ use crate::ui::theme::ThemeColors;
 use crate::core::types::{FileInfo, format_bytes};
 
 /// State for the deletion confirmation modal
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct DeleteModalState {
     pub is_open: bool,
     pub target_name: String,
@@ -12,9 +12,27 @@ pub struct DeleteModalState {
     pub total_files: usize,
     pub total_dirs: usize,
     pub total_bytes: u64,
+    pub use_recycle_bin: bool,
     pub is_dry_run: bool,
     pub force_ownership_and_acl: bool,
     pub schedule_reboot_if_locked: bool,
+}
+
+impl Default for DeleteModalState {
+    fn default() -> Self {
+        Self {
+            is_open: false,
+            target_name: String::new(),
+            target_paths: Vec::new(),
+            total_files: 0,
+            total_dirs: 0,
+            total_bytes: 0,
+            use_recycle_bin: true,
+            is_dry_run: false,
+            force_ownership_and_acl: false,
+            schedule_reboot_if_locked: false,
+        }
+    }
 }
 
 /// State for inspecting a locked file
@@ -30,7 +48,7 @@ pub struct LockedFileModalState {
 pub fn show_delete_confirmation_modal(
     ctx: &egui::Context,
     state: &mut DeleteModalState,
-    on_confirm: impl FnOnce(bool, bool, bool),
+    on_confirm: impl FnOnce(bool, bool, bool, bool),
 ) {
     if !state.is_open {
         return;
@@ -42,20 +60,21 @@ pub fn show_delete_confirmation_modal(
     let dry_run = state.is_dry_run;
     let force = state.force_ownership_and_acl;
     let reboot = state.schedule_reboot_if_locked;
+    let use_recycle_bin = state.use_recycle_bin;
 
     Window::new("Confirm deletion")
         .open(&mut open)
         .collapsible(false)
         .resizable(false)
         .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-        .default_width(480.0)
+        .default_width(500.0)
         .show(ctx, |ui| {
             ui.spacing_mut().item_spacing = egui::vec2(8.0, 8.0);
 
             ui.heading(RichText::new("Confirm deletion").color(ThemeColors::TEXT_PRIMARY));
             ui.label(
                 RichText::new(format!(
-                    "You are about to delete items from: {}",
+                    "Target: {}",
                     state.target_name
                 ))
                 .color(ThemeColors::TEXT_SECONDARY),
@@ -79,31 +98,48 @@ pub fn show_delete_confirmation_modal(
 
             ui.label(RichText::new("Execution options").color(ThemeColors::TEXT_PRIMARY));
 
+            // Recycle Bin Safe Delete
+            let recycle_bin_color = if state.use_recycle_bin { ThemeColors::STATUS_SUCCESS } else { ThemeColors::TEXT_SECONDARY };
+            ui.checkbox(
+                &mut state.use_recycle_bin,
+                RichText::new("Move to Recycle Bin (safe, reversible soft delete)")
+                    .color(recycle_bin_color),
+            );
+
             let dry_run_label = RichText::new("Simulate without deleting (dry run)")
                 .color(if state.is_dry_run { ThemeColors::STATUS_INFO } else { ThemeColors::TEXT_SECONDARY });
             ui.checkbox(&mut state.is_dry_run, dry_run_label);
 
-            ui.checkbox(
-                &mut state.force_ownership_and_acl,
-                RichText::new("Force delete (strip read-only, take ownership, grant ACL)")
-                    .color(ThemeColors::TEXT_SECONDARY),
-            );
+            if !state.use_recycle_bin {
+                ui.checkbox(
+                    &mut state.force_ownership_and_acl,
+                    RichText::new("Force delete (strip read-only, take ownership, grant ACL)")
+                        .color(ThemeColors::TEXT_SECONDARY),
+                );
 
-            ui.checkbox(
-                &mut state.schedule_reboot_if_locked,
-                RichText::new("Schedule locked files for deletion on reboot (MoveFileEx)")
-                    .color(ThemeColors::TEXT_SECONDARY),
-            );
+                ui.checkbox(
+                    &mut state.schedule_reboot_if_locked,
+                    RichText::new("Schedule locked files for deletion on reboot (MoveFileEx)")
+                        .color(ThemeColors::TEXT_SECONDARY),
+                );
+            }
 
-            ui.add_space(8.0);
+            ui.add_space(6.0);
 
             if !state.is_dry_run {
-                ui.horizontal(|ui| {
+                if state.use_recycle_bin {
                     ui.label(
-                        RichText::new("Notice: This action will permanently remove files.")
-                            .color(ThemeColors::STATUS_WARNING),
+                        RichText::new("Files will be moved to the Windows Recycle Bin and can be restored if needed.")
+                            .color(ThemeColors::STATUS_SUCCESS)
+                            .size(11.0),
                     );
-                });
+                } else {
+                    ui.label(
+                        RichText::new("Notice: Permanent deletion bypasses the Recycle Bin and cannot be easily undone.")
+                            .color(ThemeColors::STATUS_WARNING)
+                            .size(11.0),
+                    );
+                }
             }
 
             ui.add_space(8.0);
@@ -117,12 +153,16 @@ pub fn show_delete_confirmation_modal(
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let confirm_text = if state.is_dry_run {
                         "Run simulation"
+                    } else if state.use_recycle_bin {
+                        "Move to Recycle Bin"
                     } else {
                         "Permanently delete"
                     };
 
                     let btn_color = if state.is_dry_run {
                         ThemeColors::TEXT_PRIMARY
+                    } else if state.use_recycle_bin {
+                        ThemeColors::STATUS_SUCCESS
                     } else {
                         ThemeColors::STATUS_ERROR
                     };
@@ -142,7 +182,7 @@ pub fn show_delete_confirmation_modal(
     }
 
     if execute {
-        on_confirm(dry_run, force, reboot);
+        on_confirm(dry_run, force, reboot, use_recycle_bin);
     }
 }
 

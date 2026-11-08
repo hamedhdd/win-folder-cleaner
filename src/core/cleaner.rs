@@ -71,15 +71,21 @@ pub fn clean_directory_contents(
         return report;
     }
 
-    if !dir_path.is_dir() {
+    if !dir_path.exists() {
         let entry = LogEntry {
             timestamp: Local::now(),
             target_path: dir_path.to_string_lossy().to_string(),
-            action: "Validate Directory".to_string(),
+            action: "Validate Path".to_string(),
             status: LogStatus::Warning,
-            details: "Directory does not exist or is not a folder.".to_string(),
+            details: "Target path does not exist.".to_string(),
         };
         report.log_entries.push(entry);
+        return report;
+    }
+
+    // If target is an individual file, execute deletion directly
+    if dir_path.is_file() {
+        delete_path_recursive(dir_path, config, &mut report, &cancel_token, &progress_tx);
         return report;
     }
 
