@@ -18,7 +18,7 @@ win-folder-cleaner/
 │   │   ├── restart_mgr.rs           # Windows Restart Manager API integration for detecting file-locking processes
 │   │   ├── reboot_del.rs            # Win32 MoveFileExW wrapper with MOVEFILE_DELAY_UNTIL_REBOOT
 │   │   ├── temp_dirs.rs             # System & user temp location discovery (C:\Windows\Temp, %TEMP%, AppData, Profiles)
-│   │   ├── analyzer.rs              # Breadth-first level-order traversal, low-memory bounds, Rayon parallelism, on-demand file loader
+│   │   ├── analyzer.rs              # On-demand deeper expansion scanner, strict size-sorting, Rayon parallelism, low-memory bounds
 │   │   └── cleaner.rs               # Safe deletion engine, content-only root retention, force-delete, and dry-run
 │   └── ui/                          # Native desktop graphical user interface using egui & eframe
 │       ├── mod.rs                   # Re-exports UI views, theme, and application state
@@ -77,7 +77,8 @@ flowchart TD
 | `is_elevated` | `core::security` | Any Token | Queries Process Token Elevation via Win32 `GetTokenInformation`. |
 | `relaunch_as_admin` | `core::security` | Standard User -> Admin | Invokes `ShellExecuteExW` with verb `runas` to elevate while preserving arguments. |
 | `is_critical_system_path` | `core::security` | None | Validates paths against canonical Windows protected roots (`C:\Windows`, `System32`, `Program Files`, etc.). |
-| `scan_directory_tree` | `core::analyzer` | Read Permissions | Low-memory level-order (BFS) parallel traversal with bounded candidate heaps and on-demand file loading. |
+| `scan_directory_tree` | `core::analyzer` | Read Permissions | Root & Level 1 fast scan with strict descending size sorting and candidate bounds. |
+| `scan_deeper_level_for_node` | `core::analyzer` | Read Permissions | Scans deeper levels on-demand exclusively for folders expanded by clicking, sorting children by size. |
 | `load_directory_files` | `core::analyzer` | Read Permissions | Reads immediate files for a single directory on demand (< 1ms), avoiding full disk file caching. |
 | `clean_directory_contents` | `core::cleaner` | Write Permissions | Deletes contents of a folder recursively while strictly preserving the root directory itself. |
 | `take_ownership` | `core::security` | Elevated Admin | Executes `takeown /F "<path>" /A /R /D Y` without shell or PowerShell wrappers. |

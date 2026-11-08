@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-11-08
+
+### Added
+- **On-Demand Deeper Level Scanning on Expand Click**:
+  - Deeper level scanning is executed **only** for the specific folder that the user expands by clicking `▶` in the tree view.
+  - Initial scan captures the root and Level 1 subdirectories in milliseconds, leaving deeper nested subfolders unscanned until explicitly requested.
+- **Strict Size-Sorted Folder Tree View**:
+  - At every level of the tree hierarchy (Root, Level 1, Level 2, and beyond), child folders are strictly sorted descending by size (`b.total_size.cmp(&a.total_size)`).
+  - Largest folders always appear at the top of their respective branches.
+- **On-Demand Node Scanner (`scan_deeper_level_for_node`)**:
+  - Scans direct subdirectories of the clicked folder in parallel with Rayon, sizes them, discovers subfolder counts, sorts them by size, and sets `is_deeper_scanned = true`.
+- **Automated Verification Test**:
+  - Added `test_upper_levels_scanned_and_on_demand_deeper_expansion` verifying that Level 1 folders sort by size, deeper levels remain unscanned initially, and deeper levels scan on demand upon expansion.
+
 ## [0.5.0] - 2026-11-08
 
 ### Added & Optimized

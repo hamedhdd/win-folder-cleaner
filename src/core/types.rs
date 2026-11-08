@@ -103,6 +103,8 @@ pub struct FolderTreeNode {
     pub children: Vec<FolderTreeNode>,
     pub direct_files: Vec<FileInfo>,
     pub is_inaccessible: bool,
+    #[serde(default)]
+    pub is_deeper_scanned: bool,
 }
 
 impl FolderTreeNode {

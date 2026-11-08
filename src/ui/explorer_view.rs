@@ -251,9 +251,8 @@ fn render_top_left_folder_tree(ui: &mut Ui, state: &mut ExplorerViewState) {
             });
             ui.separator();
 
-            let summary_opt = state.scan_summary.clone();
-            if let Some(summary) = summary_opt {
-                if let Some(root_node) = summary.root_tree {
+            if let Some(summary) = &mut state.scan_summary {
+                if let Some(root_node) = &mut summary.root_tree {
                     if state.expanded_paths.is_empty() {
                         state.expanded_paths.insert(root_node.path.clone());
                         if state.selected_node.is_none() {
@@ -267,7 +266,7 @@ fn render_top_left_folder_tree(ui: &mut Ui, state: &mut ExplorerViewState) {
                     ScrollArea::both().auto_shrink([false, false]).show(ui, |ui| {
                         render_tree_recursive_row(
                             ui,
-                            &root_node,
+                            root_node,
                             unit,
                             0,
                             &mut state.expanded_paths,
@@ -276,6 +275,9 @@ fn render_top_left_folder_tree(ui: &mut Ui, state: &mut ExplorerViewState) {
                     });
 
                     if let Some(mut node) = node_to_select {
+                        if !node.is_deeper_scanned {
+                            crate::core::analyzer::scan_deeper_level_for_node(&mut node);
+                        }
                         if node.direct_files.is_empty() && node.immediate_files_size > 0 {
                             node.direct_files = crate::core::analyzer::load_directory_files(&node.path);
                         }
@@ -293,14 +295,14 @@ fn render_top_left_folder_tree(ui: &mut Ui, state: &mut ExplorerViewState) {
 
 fn render_tree_recursive_row(
     ui: &mut Ui,
-    node: &FolderTreeNode,
+    node: &mut FolderTreeNode,
     unit: SizeUnit,
     depth: usize,
     expanded_paths: &mut HashSet<PathBuf>,
     node_to_select: &mut Option<FolderTreeNode>,
 ) {
     let is_expanded = expanded_paths.contains(&node.path);
-    let has_children = !node.children.is_empty();
+    let can_expand = node.dir_count > 0 || !node.children.is_empty();
 
     ui.horizontal(|ui| {
         if depth > 0 {
@@ -308,12 +310,16 @@ fn render_tree_recursive_row(
         }
 
         // Expander
-        if has_children {
+        if can_expand {
             let icon = if is_expanded { "▼" } else { "▶" };
             if ui.small_button(icon).clicked() {
                 if is_expanded {
                     expanded_paths.remove(&node.path);
                 } else {
+                    // REQUIREMENT: Deeper level scanning run ONLY for folder expanded by clicking!
+                    if !node.is_deeper_scanned {
+                        crate::core::analyzer::scan_deeper_level_for_node(node);
+                    }
                     expanded_paths.insert(node.path.clone());
                 }
             }
@@ -327,6 +333,9 @@ fn render_tree_recursive_row(
             RichText::new(&node.name).color(ThemeColors::TEXT_PRIMARY),
         );
         if label.clicked() {
+            if !node.is_deeper_scanned {
+                crate::core::analyzer::scan_deeper_level_for_node(node);
+            }
             *node_to_select = Some(node.clone());
         }
 
@@ -336,8 +345,11 @@ fn render_tree_recursive_row(
         });
     });
 
-    if is_expanded && has_children {
-        for child in &node.children {
+    if is_expanded {
+        // REQUIREMENT: on left tree view folders should be sorted by size!
+        node.children.sort_by(|a, b| b.total_size.cmp(&a.total_size));
+
+        for child in &mut node.children {
             render_tree_recursive_row(ui, child, unit, depth + 1, expanded_paths, node_to_select);
         }
     }

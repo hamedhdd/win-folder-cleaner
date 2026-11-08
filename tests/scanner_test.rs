@@ -2,7 +2,7 @@ use std::fs::{self, File};
 use std::io::Write;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
-use win_folder_cleaner::core::analyzer::scan_directory_tree;
+use win_folder_cleaner::core::analyzer::{scan_deeper_level_for_node, scan_directory_tree};
 
 #[test]
 fn test_directory_tree_scanner_accuracy() {
@@ -82,7 +82,7 @@ fn test_scanner_cancellation() {
 }
 
 #[test]
-fn test_upper_levels_scanned_before_deeper_levels() {
+fn test_upper_levels_scanned_and_on_demand_deeper_expansion() {
     let temp_root = std::env::temp_dir().join("test_win_folder_cleaner_levels");
     let _ = fs::remove_dir_all(&temp_root);
     fs::create_dir_all(&temp_root).expect("create test root");
@@ -97,38 +97,43 @@ fn test_upper_levels_scanned_before_deeper_levels() {
     let level2_nested = level1_a.join("level2_nested");
     fs::create_dir_all(&level2_nested).expect("create level2_nested");
 
-    // Level 2: level2_nested contains deep file
+    // Level 2: level2_nested contains deep file (250 bytes)
     let deep_file = level2_nested.join("deep.txt");
     let mut f_deep = File::create(&deep_file).expect("create deep file");
     f_deep.write_all(&vec![b'D'; 250]).expect("write deep file");
+    drop(f_deep);
 
-    // Level 1: level1_b contains shallow file
+    // Level 1: level1_b contains shallow file (100 bytes)
     let shallow_file = level1_b.join("shallow.txt");
     let mut f_shallow = File::create(&shallow_file).expect("create shallow file");
     f_shallow.write_all(&vec![b'S'; 100]).expect("write shallow file");
+    drop(f_shallow);
 
-    let (progress_tx, progress_rx) = crossbeam_channel::unbounded();
     let cancel_token = Arc::new(AtomicBool::new(false));
-
-    let summary = scan_directory_tree(&temp_root, cancel_token, Some(progress_tx))
+    let summary = scan_directory_tree(&temp_root, cancel_token, None)
         .expect("scan should succeed");
 
-    assert_eq!(summary.total_files, 2);
-    assert_eq!(summary.total_dirs, 3);
-    assert_eq!(summary.total_bytes, 350);
+    let mut root_node = summary.root_tree.expect("root tree should exist");
+    // Verify Level 1 children are sorted descending by size
+    // level1_b has 100 bytes direct file; level1_a has 0 bytes direct file
+    assert_eq!(root_node.children.len(), 2);
+    assert_eq!(root_node.children[0].name, "level1_b");
+    assert_eq!(root_node.children[0].total_size, 100);
+    assert_eq!(root_node.children[1].name, "level1_a");
+    assert_eq!(root_node.children[1].total_size, 0);
 
-    // Verify progress reported depths in strictly non-decreasing order: 0 -> 1 -> 2
-    let mut depths = Vec::new();
-    while let Ok(progress) = progress_rx.try_recv() {
-        depths.push(progress.current_depth);
-    }
+    // Verify deeper level of level1_a is NOT scanned yet (on-demand only)
+    assert!(!root_node.children[1].is_deeper_scanned);
+    assert_eq!(root_node.children[1].children.len(), 0);
 
-    assert!(!depths.is_empty());
-    // Verify depths order is non-decreasing (upper levels first, deeper levels next)
-    for w in depths.windows(2) {
-        assert!(w[0] <= w[1], "Depth should be non-decreasing: {} > {}", w[0], w[1]);
-    }
-    assert_eq!(depths[0], 0, "First scanned level must be root (depth 0)");
+    // Now simulate user expanding level1_a: deeper level scan is triggered ONLY upon expansion!
+    scan_deeper_level_for_node(&mut root_node.children[1]);
+
+    assert!(root_node.children[1].is_deeper_scanned);
+    assert_eq!(root_node.children[1].children.len(), 1);
+    assert_eq!(root_node.children[1].children[0].name, "level2_nested");
+    assert_eq!(root_node.children[1].children[0].total_size, 250);
+    assert_eq!(root_node.children[1].total_size, 250);
 
     // Clean up
     let _ = fs::remove_dir_all(&temp_root);
