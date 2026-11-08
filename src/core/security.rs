@@ -226,11 +226,57 @@ pub fn remove_readonly(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(windows)]
+pub fn enable_take_ownership_privilege() -> Result<(), String> {
+    use windows::Win32::Security::{
+        AdjustTokenPrivileges, LookupPrivilegeValueW, LUID_AND_ATTRIBUTES, TOKEN_ADJUST_PRIVILEGES,
+        TOKEN_PRIVILEGES, TOKEN_QUERY, SE_PRIVILEGE_ENABLED,
+    };
+    use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+    use windows::Win32::Foundation::HANDLE;
+    use windows::core::w;
+
+    unsafe {
+        let mut token = HANDLE::default();
+        if OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, &mut token).is_err() {
+            return Err("Failed to open process token for privilege adjustment.".to_string());
+        }
+
+        let mut luid = windows::Win32::Foundation::LUID::default();
+        if LookupPrivilegeValueW(None, w!("SeTakeOwnershipPrivilege"), &mut luid).is_err() {
+            let _ = windows::Win32::Foundation::CloseHandle(token);
+            return Err("Failed to lookup SeTakeOwnershipPrivilege LUID.".to_string());
+        }
+
+        let tp = TOKEN_PRIVILEGES {
+            PrivilegeCount: 1,
+            Privileges: [LUID_AND_ATTRIBUTES {
+                Luid: luid,
+                Attributes: SE_PRIVILEGE_ENABLED,
+            }],
+        };
+
+        let res = AdjustTokenPrivileges(token, false, Some(&tp), 0, None, None);
+        let _ = windows::Win32::Foundation::CloseHandle(token);
+        if res.is_ok() {
+            Ok(())
+        } else {
+            Err("AdjustTokenPrivileges failed to enable SeTakeOwnershipPrivilege.".to_string())
+        }
+    }
+}
+
+#[cfg(not(windows))]
+pub fn enable_take_ownership_privilege() -> Result<(), String> {
+    Ok(())
+}
+
 /// Takes administrative ownership of a path equivalent to:
 /// `takeown /F "<path>" /A /R /D Y`
 ///
 /// Uses direct `std::process::Command` without cmd.exe or PowerShell.
 pub fn take_ownership(path: &Path) -> Result<(), String> {
+    let _ = enable_take_ownership_privilege();
     let path_str = path.to_string_lossy().to_string();
     let mut cmd = Command::new("takeown.exe");
     cmd.args(&["/F", &path_str, "/A", "/R", "/D", "Y"]);

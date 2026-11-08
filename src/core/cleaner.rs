@@ -119,6 +119,22 @@ pub fn clean_directory_contents(
     report
 }
 
+#[cfg(windows)]
+pub fn is_reparse_point_or_junction(path: &Path) -> bool {
+    use std::os::windows::fs::MetadataExt;
+    if let Ok(meta) = fs::symlink_metadata(path) {
+        // FILE_ATTRIBUTE_REPARSE_POINT = 0x00000400
+        (meta.file_attributes() & 0x00000400) != 0
+    } else {
+        false
+    }
+}
+
+#[cfg(not(windows))]
+pub fn is_reparse_point_or_junction(_path: &Path) -> bool {
+    false
+}
+
 /// Recursively deletes an individual path (file or folder).
 pub fn delete_path_recursive(
     path: &Path,
@@ -192,9 +208,10 @@ pub fn delete_path_recursive(
         return;
     }
 
-    // Do not follow symlinks/junctions
-    if file_type.is_symlink() {
-        let res = if file_type.is_dir() {
+    // Do not follow symlinks, directory junctions, mount points, or reparse points
+    let is_junction = is_reparse_point_or_junction(path);
+    if file_type.is_symlink() || is_junction {
+        let res = if file_type.is_dir() || is_junction {
             fs::remove_dir(path)
         } else {
             fs::remove_file(path)
@@ -205,9 +222,9 @@ pub fn delete_path_recursive(
                 report.log_entries.push(LogEntry {
                     timestamp: Local::now(),
                     target_path: path.to_string_lossy().to_string(),
-                    action: "Delete Symlink".to_string(),
+                    action: "Delete Junction / Symlink".to_string(),
                     status: LogStatus::Success,
-                    details: "Removed symbolic link/junction without affecting target.".to_string(),
+                    details: "Removed directory junction/symlink reparse point without traversing into target.".to_string(),
                 });
             }
             Err(e) => {
@@ -215,9 +232,9 @@ pub fn delete_path_recursive(
                 report.log_entries.push(LogEntry {
                     timestamp: Local::now(),
                     target_path: path.to_string_lossy().to_string(),
-                    action: "Delete Symlink".to_string(),
+                    action: "Delete Junction / Symlink".to_string(),
                     status: LogStatus::Error,
-                    details: format!("Failed to remove symlink: {}", e),
+                    details: format!("Failed to remove reparse point: {}", e),
                 });
             }
         }

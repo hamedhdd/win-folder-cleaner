@@ -134,6 +134,14 @@ fn test_upper_levels_scanned_and_on_demand_deeper_expansion() {
     assert_eq!(root_node.children[0].children[0].total_size, 250);
     assert_eq!(root_node.children[0].total_size, 250);
 
+    // Test headless asynchronous node expansion
+    let cancel = Arc::new(AtomicBool::new(false));
+    let res = win_folder_cleaner::core::analyzer::scan_node_deep_headless(&level1_a, cancel);
+    assert_eq!(res.children.len(), 1);
+    assert_eq!(res.children[0].name, "level2_nested");
+    assert_eq!(res.total_size, 250);
+    assert_eq!(res.file_count, 1);
+
     // Clean up
     let _ = fs::remove_dir_all(&temp_root);
 }

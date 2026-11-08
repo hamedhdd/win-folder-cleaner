@@ -77,7 +77,10 @@ flowchart TD
 | `is_elevated` | `core::security` | Any Token | Queries Process Token Elevation via Win32 `GetTokenInformation`. |
 | `relaunch_as_admin` | `core::security` | Standard User -> Admin | Invokes `ShellExecuteExW` with verb `runas` to elevate while preserving arguments. |
 | `is_critical_system_path` | `core::security` | None | Validates paths against canonical Windows protected roots (`C:\Windows`, `System32`, `Program Files`, etc.). |
-| `compute_dir_stats_recursive`| `core::analyzer` | Read Permissions | Fast zero-allocation recursive traversal computing true cumulative byte counts and file/dir totals. |
+| `enable_take_ownership_privilege` | `core::security` | Elevated Admin | Adjusts process token privileges via Win32 `AdjustTokenPrivileges` for `SeTakeOwnershipPrivilege`. |
+| `is_reparse_point_or_junction` | `core::cleaner` | None | Detects `FILE_ATTRIBUTE_REPARSE_POINT (0x400)` to guard against TOCTOU junction traversal. |
+| `compute_dir_stats_recursive`| `core::analyzer` | Read Permissions | Fast zero-allocation recursive traversal computing true cumulative bytes, hardlink de-duplication, and inaccessible accounting. |
+| `scan_node_deep_headless` | `core::analyzer` | Read Permissions | Headless asynchronous worker scanning deeper levels in the background without freezing the UI. |
 | `scan_directory_tree` | `core::analyzer` | Read Permissions | Root & Level 1 fast scan with strict descending size sorting, true recursive sizes, and candidate bounds. |
 | `scan_deeper_level_for_node` | `core::analyzer` | Read Permissions | Scans deeper levels on-demand exclusively for folders expanded by clicking, sorting children by size. |
 | `load_directory_files` | `core::analyzer` | Read Permissions | Reads immediate files for a single directory on demand (< 1ms), avoiding full disk file caching. |

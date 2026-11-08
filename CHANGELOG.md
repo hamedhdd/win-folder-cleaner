@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] - 2026-11-08
+
+### Added
+- **Asynchronous Non-Blocking Folder Expansion**:
+  - Dispatched on-demand folder expansion to background worker threads using `scan_node_deep_headless` and crossbeam channels, completely eliminating UI thread freezes during folder navigation.
+  - Added live status feedback: `⟳ scanning...` badge on expanding tree rows, and responsive background analysis placeholders in the contents grid and pie chart view.
+  - In-place recursive tree caching ensures subsequent expansions and collapses of previously analyzed folders are 0ms instantaneous.
+- **Accurate Inaccessible & Skipped Error Accounting**:
+  - Eliminated silent error drops in recursive sizing; tracks every inaccessible directory or file due to access restrictions or sharing violations.
+  - Annotated tree rows with `⚠️` warning badges and hover tooltips detailing skipped subtree counts.
+  - Propagated true inaccessible item totals to `DirScanSummary`, Dashboard stat cards, and status bar.
+- **Windows Hardlink De-duplication**:
+  - Integrated Win32 `GetFileInformationByHandle` to inspect `nNumberOfLinks` and volume file identifiers (`nFileIndexHigh`, `nFileIndexLow`).
+  - De-duplicates shared hardlinks in Windows system directories (`WinSxS` and `System32`), ensuring sizes match authentic disk footprint rather than inflated duplicate counting.
+- **Elevated TOCTOU Junction Guard & Reparse Point Safety**:
+  - Implemented `is_reparse_point_or_junction` utilizing `FILE_ATTRIBUTE_REPARSE_POINT (0x400)`.
+  - Ensures administrative deletion of directories removes only the junction/symlink link itself without descending into target directories, preventing symlink-swap privilege escalation vulnerabilities.
+- **Direct Token Privilege Adjustment (`SeTakeOwnershipPrivilege`)**:
+  - Added Win32 token privilege activation via `AdjustTokenPrivileges` enabling `SeTakeOwnershipPrivilege` before taking ownership operations.
+
 ## [0.7.0] - 2026-11-08
 
 ### Fixed

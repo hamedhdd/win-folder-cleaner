@@ -1,13 +1,17 @@
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::process::Command;
+use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
+use crossbeam_channel::{Receiver, Sender};
 use eframe::egui::{
     self, Color32, ComboBox, Frame, Margin, ProgressBar, RichText, Rounding, ScrollArea, Stroke, Ui, Vec2,
 };
 
 use crate::core::security::get_all_drives_space_info;
 use crate::core::types::{
-    DirScanSummary, DriveSpaceInfo, FileInfo, FolderTreeNode, SizeUnit, SortColumn, SortDirection,
+    DirScanSummary, DriveSpaceInfo, FileInfo, FolderTreeNode, NodeScanResult, SizeUnit, SortColumn,
+    SortDirection,
 };
 use crate::ui::chart_view::{render_pro_chart, ChartMode};
 use crate::ui::theme::ThemeColors;
@@ -24,6 +28,9 @@ pub struct ExplorerViewState {
     pub search_query: String,
     pub sort_column: SortColumn,
     pub sort_direction: SortDirection,
+    pub pending_expansions: HashSet<PathBuf>,
+    pub node_expand_tx: Sender<NodeScanResult>,
+    pub node_expand_rx: Receiver<NodeScanResult>,
 }
 
 impl Default for ExplorerViewState {
@@ -33,6 +40,7 @@ impl Default for ExplorerViewState {
             .first()
             .map(|d| d.letter.clone())
             .unwrap_or_else(|| "C:\\".to_string());
+        let (tx, rx) = crossbeam_channel::unbounded();
 
         Self {
             selected_path: default_path,
@@ -46,6 +54,9 @@ impl Default for ExplorerViewState {
             search_query: String::new(),
             sort_column: SortColumn::Size,
             sort_direction: SortDirection::Descending,
+            pending_expansions: HashSet::new(),
+            node_expand_tx: tx,
+            node_expand_rx: rx,
         }
     }
 }
@@ -62,6 +73,30 @@ pub fn render_explorer_view(
     on_delete_single_file: &mut impl FnMut(&FileInfo),
     on_clean_folder_contents: &mut impl FnMut(&PathBuf),
 ) {
+    // 0. Process completed background node expansions without ever blocking the UI
+    while let Ok(res) = state.node_expand_rx.try_recv() {
+        state.pending_expansions.remove(&res.path);
+        if let Some(summary) = &mut state.scan_summary {
+            if let Some(root_node) = &mut summary.root_tree {
+                update_tree_node_recursive(root_node, &res);
+            }
+        }
+        if let Some(sel) = &mut state.selected_node {
+            if sel.path == res.path {
+                sel.children = res.children.clone();
+                sel.direct_files = res.direct_files.clone();
+                sel.total_size = res.total_size;
+                sel.immediate_files_size = res.immediate_files_size;
+                sel.file_count = res.file_count;
+                sel.dir_count = res.dir_count;
+                sel.inaccessible_count = res.inaccessible_count;
+                sel.is_inaccessible = res.inaccessible_count > 0 && res.total_size == 0;
+                sel.is_deeper_scanned = true;
+                sel.children.sort_by(|a, b| b.total_size.cmp(&a.total_size));
+            }
+        }
+    }
+
     ui.spacing_mut().item_spacing = Vec2::new(6.0, 6.0);
 
     // 1. Pro Toolbar with Drive Dropdown, Path textfield, Scan/Stop, and Unit Selectors
@@ -237,6 +272,29 @@ fn render_scanning_indicator(
         });
 }
 
+fn update_tree_node_recursive(node: &mut FolderTreeNode, res: &NodeScanResult) -> bool {
+    if node.path == res.path {
+        node.children = res.children.clone();
+        node.direct_files = res.direct_files.clone();
+        node.total_size = res.total_size;
+        node.immediate_files_size = res.immediate_files_size;
+        node.file_count = res.file_count;
+        node.dir_count = res.dir_count;
+        node.inaccessible_count = res.inaccessible_count;
+        node.is_inaccessible = res.inaccessible_count > 0 && res.total_size == 0;
+        node.is_deeper_scanned = true;
+        node.children.sort_by(|a, b| b.total_size.cmp(&a.total_size));
+        return true;
+    }
+    for child in &mut node.children {
+        if update_tree_node_recursive(child, res) {
+            node.children.sort_by(|a, b| b.total_size.cmp(&a.total_size));
+            return true;
+        }
+    }
+    false
+}
+
 // ------------------------------------------------------------------------------------------------
 // 2. Top-Left: Directory Tree View (Folder | Size)
 // ------------------------------------------------------------------------------------------------
@@ -282,14 +340,13 @@ fn render_top_left_folder_tree(ui: &mut Ui, state: &mut ExplorerViewState) {
                                 unit,
                                 0,
                                 &mut state.expanded_paths,
+                                &mut state.pending_expansions,
+                                &state.node_expand_tx,
                                 &mut node_to_select,
                             );
                         });
 
                     if let Some(mut node) = node_to_select {
-                        if !node.is_deeper_scanned {
-                            crate::core::analyzer::scan_deeper_level_for_node(&mut node);
-                        }
                         if node.direct_files.is_empty() && node.immediate_files_size > 0 {
                             node.direct_files = crate::core::analyzer::load_directory_files(&node.path);
                         }
@@ -311,9 +368,12 @@ fn render_tree_recursive_row(
     unit: SizeUnit,
     depth: usize,
     expanded_paths: &mut HashSet<PathBuf>,
+    pending_expansions: &mut HashSet<PathBuf>,
+    node_expand_tx: &Sender<NodeScanResult>,
     node_to_select: &mut Option<FolderTreeNode>,
 ) {
     let is_expanded = expanded_paths.contains(&node.path);
+    let is_pending = pending_expansions.contains(&node.path);
     let can_expand = node.dir_count > 0 || !node.children.is_empty();
 
     ui.horizontal(|ui| {
@@ -328,11 +388,18 @@ fn render_tree_recursive_row(
                 if is_expanded {
                     expanded_paths.remove(&node.path);
                 } else {
-                    // REQUIREMENT: Deeper level scanning run ONLY for folder expanded by clicking!
-                    if !node.is_deeper_scanned {
-                        crate::core::analyzer::scan_deeper_level_for_node(node);
-                    }
                     expanded_paths.insert(node.path.clone());
+                    // Asynchronously trigger deeper scan on background worker so GUI never freezes!
+                    if !node.is_deeper_scanned && !is_pending {
+                        pending_expansions.insert(node.path.clone());
+                        let tx = node_expand_tx.clone();
+                        let path = node.path.clone();
+                        std::thread::spawn(move || {
+                            let cancel = Arc::new(AtomicBool::new(false));
+                            let res = crate::core::analyzer::scan_node_deep_headless(&path, cancel);
+                            let _ = tx.send(res);
+                        });
+                    }
                 }
             }
         } else {
@@ -345,10 +412,28 @@ fn render_tree_recursive_row(
             RichText::new(&node.name).color(ThemeColors::TEXT_PRIMARY),
         );
         if label.clicked() {
-            if !node.is_deeper_scanned {
-                crate::core::analyzer::scan_deeper_level_for_node(node);
-            }
             *node_to_select = Some(node.clone());
+            if !node.is_deeper_scanned && !is_pending {
+                pending_expansions.insert(node.path.clone());
+                let tx = node_expand_tx.clone();
+                let path = node.path.clone();
+                std::thread::spawn(move || {
+                    let cancel = Arc::new(AtomicBool::new(false));
+                    let res = crate::core::analyzer::scan_node_deep_headless(&path, cancel);
+                    let _ = tx.send(res);
+                });
+            }
+        }
+
+        // Real-time asynchronous scanning indicator badge
+        if is_pending {
+            ui.label(RichText::new("⟳ scanning...").color(ThemeColors::ACCENT).italics());
+        }
+
+        // Inaccessible warning indicator if errors were encountered in subtree
+        if node.inaccessible_count > 0 || node.is_inaccessible {
+            ui.label(RichText::new("⚠️").color(ThemeColors::STATUS_WARNING))
+                .on_hover_text(format!("{} skipped or inaccessible items in this subtree", node.inaccessible_count));
         }
 
         // Right-aligned Size
@@ -358,11 +443,27 @@ fn render_tree_recursive_row(
     });
 
     if is_expanded {
-        // REQUIREMENT: on left tree view folders should be sorted by size!
-        node.children.sort_by(|a, b| b.total_size.cmp(&a.total_size));
+        if is_pending {
+            ui.horizontal(|ui| {
+                ui.add_space(((depth + 1) as f32) * 12.0 + 16.0);
+                ui.label(RichText::new("Analyzing subfolders in background...").color(ThemeColors::TEXT_MUTED).italics());
+            });
+        } else {
+            // STRICT REQUIREMENT: on left tree view folders should be sorted by size!
+            node.children.sort_by(|a, b| b.total_size.cmp(&a.total_size));
 
-        for child in &mut node.children {
-            render_tree_recursive_row(ui, child, unit, depth + 1, expanded_paths, node_to_select);
+            for child in &mut node.children {
+                render_tree_recursive_row(
+                    ui,
+                    child,
+                    unit,
+                    depth + 1,
+                    expanded_paths,
+                    pending_expansions,
+                    node_expand_tx,
+                    node_to_select,
+                );
+            }
         }
     }
 }
@@ -407,6 +508,16 @@ fn render_top_right_contents_table(
                 });
 
                 ui.separator();
+
+                if state.pending_expansions.contains(&node.path) {
+                    ui.vertical_centered(|ui| {
+                        ui.add_space(40.0);
+                        ui.spinner();
+                        ui.add_space(8.0);
+                        ui.label(RichText::new("Analyzing directory contents in background...").color(ThemeColors::TEXT_MUTED));
+                    });
+                    return;
+                }
 
                 // Detailed Table
                 let total_parent_size = node.total_size.max(1);
@@ -593,7 +704,16 @@ fn render_bottom_right_chart(ui: &mut Ui, state: &mut ExplorerViewState) {
         .inner_margin(Margin::same(8.0))
         .show(ui, |ui| {
             if let Some(node) = &state.selected_node {
-                render_pro_chart(ui, node, state.selected_unit, &mut state.chart_mode);
+                if state.pending_expansions.contains(&node.path) {
+                    ui.vertical_centered(|ui| {
+                        ui.add_space(40.0);
+                        ui.spinner();
+                        ui.add_space(8.0);
+                        ui.label(RichText::new("Calculating storage breakdown in background...").color(ThemeColors::TEXT_MUTED));
+                    });
+                } else {
+                    render_pro_chart(ui, node, state.selected_unit, &mut state.chart_mode);
+                }
             } else {
                 ui.vertical_centered(|ui| {
                     ui.add_space(30.0);

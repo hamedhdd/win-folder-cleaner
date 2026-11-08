@@ -1,4 +1,4 @@
-use std::collections::{BinaryHeap, HashMap};
+use std::collections::{BinaryHeap, HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -9,8 +9,78 @@ use crossbeam_channel::Sender;
 use rayon::prelude::*;
 
 use crate::core::types::{
-    DirEntrySummary, DirScanSummary, ExtensionStat, FileInfo, FolderTreeNode, ScanProgress,
+    DirEntrySummary, DirScanSummary, ExtensionStat, FileInfo, FolderTreeNode, NodeScanResult,
+    ScanProgress,
 };
+
+#[cfg(windows)]
+fn get_file_link_info(path: &Path) -> Option<(u32, u64, u32)> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows::core::PCWSTR;
+    use windows::Win32::Foundation::{CloseHandle, HANDLE, INVALID_HANDLE_VALUE};
+    use windows::Win32::Storage::FileSystem::{
+        CreateFileW, GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
+        FILE_FLAG_BACKUP_SEMANTICS, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
+        OPEN_EXISTING,
+    };
+
+    let wide: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+    unsafe {
+        let handle = CreateFileW(
+            PCWSTR(wide.as_ptr()),
+            0, // Read attributes only without file locking
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            None,
+            OPEN_EXISTING,
+            FILE_FLAG_BACKUP_SEMANTICS,
+            HANDLE::default(),
+        );
+
+        if let Ok(h) = handle {
+            if h != INVALID_HANDLE_VALUE {
+                let mut info = BY_HANDLE_FILE_INFORMATION::default();
+                let ok = GetFileInformationByHandle(h, &mut info).is_ok();
+                let _ = CloseHandle(h);
+                if ok {
+                    let vol = info.dwVolumeSerialNumber;
+                    let file_id = ((info.nFileIndexHigh as u64) << 32) | (info.nFileIndexLow as u64);
+                    return Some((vol, file_id, info.nNumberOfLinks));
+                }
+            }
+        }
+    }
+    None
+}
+
+#[cfg(not(windows))]
+fn get_file_link_info(_path: &Path) -> Option<(u32, u64, u32)> {
+    None
+}
+
+#[cfg(windows)]
+pub fn get_compressed_size(path: &Path) -> Option<u64> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows::core::PCWSTR;
+    use windows::Win32::Storage::FileSystem::GetCompressedFileSizeW;
+
+    let wide: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+    unsafe {
+        let mut high: u32 = 0;
+        let low = GetCompressedFileSizeW(PCWSTR(wide.as_ptr()), Some(&mut high));
+        if low == 0xFFFFFFFF {
+            let err = windows::Win32::Foundation::GetLastError();
+            if err.0 != 0 {
+                return None;
+            }
+        }
+        Some(((high as u64) << 32) | (low as u64))
+    }
+}
+
+#[cfg(not(windows))]
+pub fn get_compressed_size(_path: &Path) -> Option<u64> {
+    None
+}
 
 #[derive(Eq, PartialEq)]
 struct LargestFileItem(FileInfo);
@@ -64,20 +134,26 @@ pub fn load_directory_files(dir_path: &Path) -> Vec<FileInfo> {
 }
 
 /// Rapidly computes the TRUE RECURSIVE size, total file count, total subdirectory count,
-/// immediate child directory paths, and immediate files for a folder.
+/// immediate child directory paths, immediate files, and inaccessible item count for a folder.
 ///
-/// Allocates ZERO memory for individual recursive files — only accumulates raw u64 bytes and counts.
+/// Features:
+/// 1. Tracks inaccessible / permission-denied directories and files without silently dropping them.
+/// 2. De-duplicates Windows hardlinks (e.g., WinSxS / System32) so files are not counted multiple times.
+/// 3. Allocates ZERO memory for individual recursive files — only accumulates raw u64 bytes and counts.
 pub fn compute_dir_stats_recursive(
     dir_path: &Path,
     cancel_token: &Arc<AtomicBool>,
-) -> (u64, usize, usize, Vec<PathBuf>, Vec<FileInfo>) {
+) -> (u64, usize, usize, Vec<PathBuf>, Vec<FileInfo>, usize) {
     let mut total_bytes = 0u64;
     let mut total_files = 0usize;
     let mut total_dirs = 0usize;
+    let mut inaccessible_count = 0usize;
     let mut direct_subdirs = Vec::new();
     let mut direct_files = Vec::new();
 
     let mut stack = vec![dir_path.to_path_buf()];
+    let is_windows_dir = dir_path.to_string_lossy().to_ascii_lowercase().contains("windows");
+    let mut seen_hardlinks: HashSet<(u32, u64)> = HashSet::new();
 
     while let Some(current) = stack.pop() {
         if cancel_token.load(Ordering::Relaxed) {
@@ -86,14 +162,28 @@ pub fn compute_dir_stats_recursive(
 
         let entries = match fs::read_dir(&current) {
             Ok(iter) => iter,
-            Err(_) => continue,
+            Err(_) => {
+                inaccessible_count += 1;
+                continue;
+            }
         };
 
-        for entry in entries.flatten() {
+        for entry in entries {
+            let entry = match entry {
+                Ok(e) => e,
+                Err(_) => {
+                    inaccessible_count += 1;
+                    continue;
+                }
+            };
+
             let path = entry.path();
             let meta = match fs::symlink_metadata(&path) {
                 Ok(m) => m,
-                Err(_) => continue,
+                Err(_) => {
+                    inaccessible_count += 1;
+                    continue;
+                }
             };
 
             let ft = meta.file_type();
@@ -110,7 +200,20 @@ pub fn compute_dir_stats_recursive(
             } else if ft.is_file() {
                 let size = meta.len();
                 total_files += 1;
-                total_bytes += size;
+
+                // De-duplicate Windows hard links in system folders (WinSxS / System32)
+                let mut is_duplicate_link = false;
+                if is_windows_dir {
+                    if let Some((vol, file_id, links)) = get_file_link_info(&path) {
+                        if links > 1 && !seen_hardlinks.insert((vol, file_id)) {
+                            is_duplicate_link = true;
+                        }
+                    }
+                }
+
+                if !is_duplicate_link {
+                    total_bytes += size;
+                }
 
                 if current == dir_path && direct_files.len() < 100 {
                     let name = entry.file_name().to_string_lossy().to_string();
@@ -137,69 +240,76 @@ pub fn compute_dir_stats_recursive(
     }
 
     direct_files.sort_by(|a, b| b.size.cmp(&a.size));
-    (total_bytes, total_files, total_dirs, direct_subdirs, direct_files)
+    (total_bytes, total_files, total_dirs, direct_subdirs, direct_files, inaccessible_count)
 }
 
-/// Scans deeper levels ON-DEMAND for a specific folder node that the user expanded by clicking in the tree view.
-///
-/// 1. Concurrently computes TRUE RECURSIVE cumulative sizes for its direct subdirectories using Rayon.
-/// 2. STRICT REQUIREMENT 1: Sorts children descending by total size so heaviest folders are at the top.
-/// 3. STRICT REQUIREMENT 2: Runs deeper level scanning exclusively for the clicked folder, leaving nested sub-subfolders
-///    unscanned until the user explicitly expands them.
-pub fn scan_deeper_level_for_node(node: &mut FolderTreeNode) {
-    if node.is_deeper_scanned {
-        node.children.sort_by(|a, b| b.total_size.cmp(&a.total_size));
-        return;
-    }
-
-    let cancel_token = Arc::new(AtomicBool::new(false));
-
-    // Discover direct subdirectories and direct files of node.path
+/// Headless worker function to compute deeper level statistics for a given folder path.
+/// Can be spawned asynchronously on any background worker thread, NEVER blocking the UI!
+pub fn scan_node_deep_headless(
+    dir_path: &Path,
+    cancel_token: Arc<AtomicBool>,
+) -> NodeScanResult {
     let mut direct_subdirs = Vec::new();
     let mut direct_files = Vec::new();
     let mut immediate_files_size = 0u64;
+    let mut inaccessible_count = 0usize;
 
-    if let Ok(entries) = fs::read_dir(&node.path) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if let Ok(meta) = fs::symlink_metadata(&path) {
-                let ft = meta.file_type();
-                if ft.is_symlink() {
-                    continue;
-                }
-                if ft.is_dir() {
-                    direct_subdirs.push(path);
-                } else if ft.is_file() {
-                    let size = meta.len();
-                    immediate_files_size += size;
-                    if direct_files.len() < 100 {
-                        let name = entry.file_name().to_string_lossy().to_string();
-                        let ext = path
-                            .extension()
-                            .and_then(|e| e.to_str())
-                            .unwrap_or("(no extension)")
-                            .to_lowercase();
-                        direct_files.push(FileInfo {
-                            path,
-                            name,
-                            extension: ext,
-                            size,
-                            modified: meta.modified().ok(),
-                            is_dir: false,
-                            is_symlink: false,
-                            is_readonly: meta.permissions().readonly(),
-                            is_locked: false,
-                            is_inaccessible: false,
-                        });
+    match fs::read_dir(dir_path) {
+        Ok(entries) => {
+            for entry in entries {
+                let entry = match entry {
+                    Ok(e) => e,
+                    Err(_) => {
+                        inaccessible_count += 1;
+                        continue;
+                    }
+                };
+                let path = entry.path();
+                match fs::symlink_metadata(&path) {
+                    Ok(meta) => {
+                        let ft = meta.file_type();
+                        if ft.is_symlink() {
+                            continue;
+                        }
+                        if ft.is_dir() {
+                            direct_subdirs.push(path);
+                        } else if ft.is_file() {
+                            let size = meta.len();
+                            immediate_files_size += size;
+                            if direct_files.len() < 100 {
+                                let name = entry.file_name().to_string_lossy().to_string();
+                                let ext = path
+                                    .extension()
+                                    .and_then(|e| e.to_str())
+                                    .unwrap_or("(no extension)")
+                                    .to_lowercase();
+                                direct_files.push(FileInfo {
+                                    path,
+                                    name,
+                                    extension: ext,
+                                    size,
+                                    modified: meta.modified().ok(),
+                                    is_dir: false,
+                                    is_symlink: false,
+                                    is_readonly: meta.permissions().readonly(),
+                                    is_locked: false,
+                                    is_inaccessible: false,
+                                });
+                            }
+                        }
+                    }
+                    Err(_) => {
+                        inaccessible_count += 1;
                     }
                 }
             }
         }
+        Err(_) => {
+            inaccessible_count += 1;
+        }
     }
 
-    node.immediate_files_size = immediate_files_size;
     direct_files.sort_by(|a, b| b.size.cmp(&a.size));
-    node.direct_files = direct_files;
 
     // Concurrently compute true recursive sizes for each direct child subdirectory
     let mut children: Vec<FolderTreeNode> = direct_subdirs
@@ -210,7 +320,7 @@ pub fn scan_deeper_level_for_node(node: &mut FolderTreeNode) {
                 .map(|n| n.to_string_lossy().to_string())
                 .unwrap_or_else(|| subdir_path.to_string_lossy().to_string());
 
-            let (total_size, file_count, dir_count, sub_subdirs, child_direct_files) =
+            let (total_size, file_count, dir_count, sub_subdirs, child_direct_files, child_inaccessible) =
                 compute_dir_stats_recursive(subdir_path, &cancel_token);
 
             // Populate stub children so subfolders display expand arrow ▶
@@ -228,6 +338,9 @@ pub fn scan_deeper_level_for_node(node: &mut FolderTreeNode) {
                     direct_files: Vec::new(),
                     is_inaccessible: false,
                     is_deeper_scanned: false,
+                    inaccessible_count: 0,
+                    is_scanning: false,
+                    size_on_disk: None,
                 });
             }
 
@@ -242,8 +355,11 @@ pub fn scan_deeper_level_for_node(node: &mut FolderTreeNode) {
                 dir_count,
                 children: stub_children,
                 direct_files: child_direct_files,
-                is_inaccessible: false,
+                is_inaccessible: child_inaccessible > 0 && total_size == 0,
                 is_deeper_scanned: false,
+                inaccessible_count: child_inaccessible,
+                is_scanning: false,
+                size_on_disk: None,
             }
         })
         .collect();
@@ -253,12 +369,46 @@ pub fn scan_deeper_level_for_node(node: &mut FolderTreeNode) {
 
     let children_total_size: u64 = children.iter().map(|c| c.total_size).sum();
     let children_file_count: usize = children.iter().map(|c| c.file_count).sum();
+    let children_inaccessible: usize = children.iter().map(|c| c.inaccessible_count).sum();
 
-    node.total_size = immediate_files_size + children_total_size;
-    node.file_count = node.direct_files.len() + children_file_count;
-    node.dir_count = children.len();
-    node.children = children;
+    let total_size = immediate_files_size + children_total_size;
+    let file_count = direct_files.len() + children_file_count;
+    let dir_count = children.len();
+    let total_inaccessible = inaccessible_count + children_inaccessible;
+
+    NodeScanResult {
+        path: dir_path.to_path_buf(),
+        children,
+        direct_files,
+        total_size,
+        immediate_files_size,
+        file_count,
+        dir_count,
+        inaccessible_count: total_inaccessible,
+        size_on_disk: None,
+    }
+}
+
+/// Scans deeper levels ON-DEMAND for a specific folder node.
+/// Backwards-compatible synchronous adapter delegating to headless worker.
+pub fn scan_deeper_level_for_node(node: &mut FolderTreeNode) {
+    if node.is_deeper_scanned {
+        node.children.sort_by(|a, b| b.total_size.cmp(&a.total_size));
+        return;
+    }
+
+    let cancel_token = Arc::new(AtomicBool::new(false));
+    let res = scan_node_deep_headless(&node.path, cancel_token);
+
+    node.children = res.children;
+    node.direct_files = res.direct_files;
+    node.total_size = res.total_size;
+    node.immediate_files_size = res.immediate_files_size;
+    node.file_count = res.file_count;
+    node.dir_count = res.dir_count;
+    node.inaccessible_count = res.inaccessible_count;
     node.is_deeper_scanned = true;
+    node.children.sort_by(|a, b| b.total_size.cmp(&a.total_size));
 }
 
 /// Initial root scanner:
@@ -296,6 +446,9 @@ pub fn scan_directory_tree(
         direct_files: Vec::new(),
         is_inaccessible: false,
         is_deeper_scanned: false,
+        inaccessible_count: 0,
+        is_scanning: false,
+        size_on_disk: None,
     };
 
     // Computes root and Level 1 children with true recursive sizes and size sorting
@@ -393,7 +546,7 @@ pub fn scan_directory_tree(
         inaccessible_bytes: 0,
         total_files,
         total_dirs,
-        inaccessible_files: if root_node.is_inaccessible { 1 } else { 0 },
+        inaccessible_files: root_node.inaccessible_count + if root_node.is_inaccessible { 1 } else { 0 },
         largest_files,
         largest_subdirs,
         extensions,
@@ -408,7 +561,7 @@ pub fn scan_directory_tree(
             files_scanned: total_files,
             dirs_scanned: total_dirs,
             bytes_scanned: total_bytes,
-            inaccessible_count: 0,
+            inaccessible_count: root_node.inaccessible_count + if root_node.is_inaccessible { 1 } else { 0 },
             is_completed: true,
             cancelled: false,
             error: None,

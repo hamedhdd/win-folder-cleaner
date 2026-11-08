@@ -105,6 +105,26 @@ pub struct FolderTreeNode {
     pub is_inaccessible: bool,
     #[serde(default)]
     pub is_deeper_scanned: bool,
+    #[serde(default)]
+    pub inaccessible_count: usize,
+    #[serde(default)]
+    pub is_scanning: bool,
+    #[serde(default)]
+    pub size_on_disk: Option<u64>,
+}
+
+/// Asynchronous result of an on-demand node deep scan
+#[derive(Debug, Clone)]
+pub struct NodeScanResult {
+    pub path: PathBuf,
+    pub children: Vec<FolderTreeNode>,
+    pub direct_files: Vec<FileInfo>,
+    pub total_size: u64,
+    pub immediate_files_size: u64,
+    pub file_count: usize,
+    pub dir_count: usize,
+    pub inaccessible_count: usize,
+    pub size_on_disk: Option<u64>,
 }
 
 impl FolderTreeNode {
