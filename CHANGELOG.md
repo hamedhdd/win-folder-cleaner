@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.2] - 2026-11-08
+
+### Added & Fixed
+- **Zero-Silent-Crash Native Diagnostics & Portability**:
+  - **Native Win32 Error Dialog**: Implemented custom top-level panic and startup error hooks in `src/main.rs`. Replaced silent exit with native Windows `MessageBoxW` displaying precise error details, common causes, and diagnostic recovery steps.
+  - **Diagnostic Crash Logging**: Automatically persists crash and panic traces to `%TEMP%\win_folder_cleaner_crash.log` with formatted timestamps and callsite locations.
+  - **Statically Linked C Runtime (`+crt-static`)**: Added `.cargo/config.toml` targeting `x86_64-pc-windows-msvc` with `target-feature=+crt-static`. Fully embeds MSVC CRT into the single standalone binary, eliminating runtime crashes caused by missing `vcruntime140.dll` / `msvcp140.dll` on clean target systems.
+
 ## [0.9.1] - 2026-11-08
 
 ### Fixed

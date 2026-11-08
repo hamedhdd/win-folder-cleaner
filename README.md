@@ -44,9 +44,12 @@ Built with **`egui` / `eframe`** and direct **Windows APIs** (`windows` crate), 
    - Does not traverse symlinks or directory junctions by default.
    - Non-blocking background worker with cancellation support and real-time throttled UI updates.
 
-3. **Subsystem & Console Window Suppression**:
+3. **Subsystem & Console Window Suppression with Zero-Silent-Crash Guarantee**:
    - Configured with `#![windows_subsystem = "windows"]` in `src/main.rs`.
    - Configures the PE binary header to `IMAGE_SUBSYSTEM_WINDOWS_GUI`, completely eliminating the companion terminal/console window on startup.
+   - **Native Win32 Error Modal**: Uses native `MessageBoxW` and global panic hooks so that any initialization or runtime failures immediately present clear diagnostic guidance rather than silently terminating.
+   - **Crash Diagnostics**: Automatically records any panic or startup error trace to `%TEMP%\win_folder_cleaner_crash.log`.
+   - **Static C Runtime (`+crt-static`)**: Built with static MSVC CRT linking, guaranteeing the binary runs out of the box without requiring Visual C++ Redistributable DLLs (`vcruntime140.dll` / `msvcp140.dll`).
 
 4. **Privilege & Elevation Management**:
    - Win32 Process Token Elevation detection (`OpenProcessToken` + `GetTokenInformation`).
